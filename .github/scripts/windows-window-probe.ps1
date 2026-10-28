@@ -1,6 +1,6 @@
 # Runs agent-facing commands from a launcher with no console (like an app that starts an agent), and fails if any
 # of them opens a visible top-level window.
-param([Parameter(Mandatory)][string]$Cli, [Parameter(Mandatory)][string]$Project)
+param([Parameter(Mandatory)][string]$Cli, [Parameter(Mandatory)][string]$Project, [Parameter(Mandatory)][string]$Chrome)
 $ErrorActionPreference = 'Stop'
 
 Add-Type @'
@@ -77,6 +77,23 @@ const stop = Number(seconds) > 0 ? setTimeout(() => child.kill(), Number(seconds
 child.on("exit", (code) => { clearTimeout(stop); process.exit(code ?? 0); });
 '@ | Set-Content -Encoding utf8 $launcher
 
+
+function Topology([string]$Name, [string[]]$NodeArgs) {
+  $baseline = Snapshot
+  $p = Start-Process -FilePath node -ArgumentList $NodeArgs -WindowStyle Hidden -PassThru
+  $found = @{}
+  while (-not $p.HasExited) {
+    foreach ($entry in (Snapshot).GetEnumerator()) {
+      if (-not $baseline.ContainsKey($entry.Key)) { $found[$entry.Key] = $entry.Value }
+    }
+    Start-Sleep -Milliseconds 50
+  }
+  $p.WaitForExit()
+  Write-Host ("{0,-28} exit={1} new windows={2}" -f $Name, $p.ExitCode, $found.Count)
+}
+$pageProbe = Join-Path $env:GITHUB_WORKSPACE '.github/scripts/chrome-page-probe.mjs'
+Topology 'chrome page, direct' @($pageProbe, $env:GITHUB_WORKSPACE, $Chrome)
+Topology 'chrome page, one hidden hop' @($pageProbe, $env:GITHUB_WORKSPACE, $Chrome, 'hop')
 
 $runs = @(
   (Watch 'render' 0 @('render', '--fps', '30', '--quality', 'draft', '--workers', '2', '--output', 'renders/probe.mp4')),
