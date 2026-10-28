@@ -46,7 +46,11 @@ function Watch([string[]]$NodeArgs) {
   $script:baseline = Snapshot
   $p = Start-Process -FilePath node -ArgumentList $NodeArgs -WindowStyle Hidden -PassThru
   $found = @{}
+  $script:procs = @{}
   while (-not $p.HasExited) {
+    foreach ($q in (Get-CimInstance Win32_Process | Where-Object { $_.Name -match 'chrome|ffmpeg|ffprobe|powershell|pwsh|nvidia|cmd|conhost|node' })) {
+      if (-not $script:procs.ContainsKey($q.ProcessId)) { $script:procs[$q.ProcessId] = "$($q.Name) pid=$($q.ProcessId) ppid=$($q.ParentProcessId) cmd=[$(($q.CommandLine -replace '\s+',' ').Substring(0, [Math]::Min(170, "$($q.CommandLine)".Length)))]" }
+    }
     foreach ($entry in (Snapshot).GetEnumerator()) {
       if (-not $baseline.ContainsKey($entry.Key) -and -not $found.ContainsKey($entry.Key)) { $found[$entry.Key] = $entry.Value }
     }
@@ -78,6 +82,7 @@ const child = spawn(process.execPath, [cli, "render", "--fps", "30", "--quality"
 child.on("exit", (code) => process.exit(code ?? 1));
 '@ | Set-Content -Encoding utf8 $launcher
 $render = Watch @($launcher, $Cli, $Project)
+$script:procs.Values | Sort-Object | ForEach-Object { Write-Host "proc $_" }
 Write-Host "Render exit code: $($render.Exit)"
 Write-Host "New visible windows during the render: $($render.Windows.Count)"
 $render.Windows.Values | ForEach-Object { Write-Host "$($_.Process) class=$($_.Class) title=[$($_.Title)]" }
