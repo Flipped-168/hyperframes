@@ -1,6 +1,3 @@
-import { mkdtempSync, readFileSync, utimesSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -8,9 +5,6 @@ import {
   getCompiledGpuEncoders,
   getGpuEncoderName,
   getProbeArgs,
-  gpuProbeKey,
-  keepGpuEncoder,
-  keptGpuEncoder,
   mapPresetForGpuEncoder,
   resetCachedGpuEncoder,
   selectUsableGpuEncoder,
@@ -155,59 +149,11 @@ describe("getProbeArgs", () => {
   });
 });
 
-describe("the kept GPU encoder probe", () => {
-  const scratch = () => mkdtempSync(join(tmpdir(), "hf-gpu-probe-"));
-  /** A file standing in for an FFmpeg build: it cannot run, so any probe of it finds no encoder. */
-  const fakeFfmpeg = (dir: string) => {
-    const path = join(dir, "ffmpeg");
-    writeFileSync(path, "not ffmpeg");
-    return path;
-  };
+describe("getCachedGpuEncoder", () => {
+  afterEach(() => resetCachedGpuEncoder());
 
-  afterEach(() => {
-    resetCachedGpuEncoder();
-    vi.unstubAllEnvs();
-  });
-
-  it("keys on the FFmpeg build, and has no key for a bare name PATH resolves", () => {
-    const ffmpeg = fakeFfmpeg(scratch());
-    const before = gpuProbeKey(ffmpeg);
-    expect(before).not.toBeNull();
-    expect(gpuProbeKey("ffmpeg")).toBeNull();
-    utimesSync(ffmpeg, new Date(2020, 0, 1), new Date(2020, 0, 1));
-    expect(gpuProbeKey(ffmpeg)).not.toBe(before);
-  });
-
-  it("answers from a kept probe of the same build, and not from a stale, other or unknown one", () => {
-    const dir = scratch();
-    const file = join(dir, "kept.json");
-    const ffmpeg = fakeFfmpeg(dir);
-    const key = gpuProbeKey(ffmpeg)!;
-    keepGpuEncoder(file, ffmpeg, key, null, 1_000);
-    expect(keptGpuEncoder(file, ffmpeg, key, 2_000)).toBeNull();
-    expect(keptGpuEncoder(file, ffmpeg, "another build", 2_000)).toBeUndefined();
-    expect(keptGpuEncoder(file, ffmpeg, key, 1_000 + 8 * 24 * 60 * 60 * 1000)).toBeUndefined();
-    writeFileSync(file, JSON.stringify({ [ffmpeg]: { key, encoder: "cuda", at: 1_000 } }));
-    expect(keptGpuEncoder(file, ffmpeg, key, 2_000)).toBeUndefined();
-  });
-
-  it("a render reads the machine's kept answer instead of probing, and asks once however many encoders wait", async () => {
-    const dir = scratch();
-    const file = join(dir, "kept.json");
-    const ffmpeg = fakeFfmpeg(dir);
-    vi.stubEnv("HYPERFRAMES_FFMPEG_PATH", ffmpeg);
-    keepGpuEncoder(file, ffmpeg, gpuProbeKey(ffmpeg)!, "videotoolbox");
-    // A probe of the stand-in finds nothing, so videotoolbox can only come from the kept answer.
-    const first = getCachedGpuEncoder(file);
-    expect(getCachedGpuEncoder(file)).toBe(first);
-    expect(await first).toBe("videotoolbox");
-  });
-
-  it("keeps nothing when FFmpeg could not list its encoders", async () => {
-    const dir = scratch();
-    const file = join(dir, "kept.json");
-    vi.stubEnv("HYPERFRAMES_FFMPEG_PATH", fakeFfmpeg(dir));
-    expect(await getCachedGpuEncoder(file)).toBeNull();
-    expect(() => readFileSync(file)).toThrow();
+  it("is one probe however many callers ask while it runs", () => {
+    const first = getCachedGpuEncoder();
+    expect(getCachedGpuEncoder()).toBe(first);
   });
 });
