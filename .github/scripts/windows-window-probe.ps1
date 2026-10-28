@@ -82,11 +82,12 @@ child.on("exit", (code) => { clearTimeout(stop); process.exit(code ?? 0); });
 $argsProbe = Join-Path $env:GITHUB_WORKSPACE '.github/scripts/chrome-args-probe.mjs'
 $argsFile = Join-Path $env:RUNNER_TEMP 'chrome-args.txt'
 $script:tries = 0
+$script:hop = ''
 function Opens([string[]]$Args) {
   $script:tries++
   Set-Content -Path $argsFile -Value $Args
   $baseline = Snapshot
-  $p = Start-Process -FilePath node -ArgumentList @($argsProbe, $env:GITHUB_WORKSPACE, $Chrome, $argsFile, (Join-Path $env:RUNNER_TEMP "profile-$script:tries")) -WindowStyle Hidden -PassThru
+  $p = Start-Process -FilePath node -ArgumentList @($argsProbe, $env:GITHUB_WORKSPACE, $Chrome, $argsFile, (Join-Path $env:RUNNER_TEMP "profile-$script:tries"), $script:hop) -WindowStyle Hidden -PassThru
   $opened = $false
   while (-not $p.HasExited) {
     foreach ($entry in (Snapshot).GetEnumerator()) { if (-not $baseline.ContainsKey($entry.Key)) { $opened = $true } }
@@ -96,8 +97,9 @@ function Opens([string[]]$Args) {
   return $opened
 }
 $current = @(Get-Content (Join-Path $env:GITHUB_WORKSPACE '.github/scripts/chrome-args.txt'))
+$script:hop = 'hop'
 if (Opens $current) {
-  Write-Host "The CLI's Chrome arguments ($($current.Count)) open a window; narrowing"
+  Write-Host "The CLI's Chrome arguments ($($current.Count)) open a window one hidden hop down; narrowing"
   $n = 2
   while ($current.Count -ge 2 -and $script:tries -lt 80) {
     $size = [math]::Ceiling($current.Count / $n)
@@ -111,7 +113,7 @@ if (Opens $current) {
   Write-Host "Smallest set that still opens a window after $script:tries launches:"
   $current | ForEach-Object { Write-Host "    $_" }
 } else {
-  Write-Host "The CLI's Chrome arguments, launched on their own, open no window ($script:tries launch)"
+  Write-Host "The CLI's Chrome arguments, even one hidden hop down, open no window ($script:tries launch)"
 }
 
 $runs = @(
