@@ -72,8 +72,8 @@ async function cloneOrCopy(
   const temp = atomicTempPath(to);
   try {
     await copyFile(from, temp, constants.COPYFILE_FICLONE);
-    beforeReplace?.();
     await stopServingAndClose(to);
+    beforeReplace?.();
     try {
       renameWithRetry(temp, to);
     } catch (error) {
