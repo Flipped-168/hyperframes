@@ -1,6 +1,6 @@
 import { DEFAULT_MAX_SCREENSHOTS } from "../capture/types.js";
 import { failCommand, scheduleCliExit } from "../utils/commandResult.js";
-import { defineCommand } from "citty";
+import { defineCommand } from "../utils/defineCommand.js";
 import { resolve } from "node:path";
 import type { Example } from "./_examples.js";
 import { normalizeErrorMessage } from "../utils/errorMessage.js";

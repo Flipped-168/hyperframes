@@ -28,7 +28,7 @@ import { failCommand } from "../../utils/commandResult.js";
  * HeyGen's external API OpenAPI spec; never hand-edit it.
  */
 
-import { defineCommand } from "citty";
+import { defineCommand } from "../../utils/defineCommand.js";
 
 import {
   detectAspectRatioFromHtml,

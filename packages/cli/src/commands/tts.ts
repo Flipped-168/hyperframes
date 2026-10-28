@@ -1,7 +1,7 @@
 import { failCommand, failUsage } from "../utils/commandResult.js";
 import { isTextFile } from "../utils/textFile.js";
 // fallow-ignore-file code-duplication
-import { defineCommand } from "citty";
+import { defineCommand } from "../utils/defineCommand.js";
 import type { Example } from "./_examples.js";
 import { readFileSync } from "node:fs";
 

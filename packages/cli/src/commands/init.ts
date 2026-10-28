@@ -5,7 +5,8 @@
 // fallow-ignore-file complexity
 import { failCommand, finishCommand } from "../utils/commandResult.js";
 import { writeNewFileSync } from "../utils/writeNewFile.js";
-import { defineCommand, runCommand } from "citty";
+import { runCommand } from "citty";
+import { defineCommand } from "../utils/defineCommand.js";
 import type { Example } from "./_examples.js";
 import { patchMediaPlaceholders, type InitMediaOptions } from "./initMedia.js";
 

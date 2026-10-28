@@ -9,7 +9,7 @@ import { failCommand } from "../utils/commandResult.js";
  * lives in `@hyperframes/aws-lambda/sdk`.
  */
 
-import { defineCommand } from "citty";
+import { defineCommand } from "../utils/defineCommand.js";
 import type { DistributedFormat } from "@hyperframes/aws-lambda/sdk";
 import { type CanvasResolution, DISTRIBUTED_FPS, isDistributedFps } from "@hyperframes/core";
 import { parseOutputResolutionFlag } from "../utils/parseOutputResolution.js";
