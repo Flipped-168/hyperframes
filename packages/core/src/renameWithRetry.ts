@@ -13,7 +13,6 @@ interface Options {
   copyFallback?: boolean;
 }
 
-/** Windows refusing a file another process holds open, which a moment's wait may clear. */
 export function isWindowsHold(error: unknown, platform = process.platform): boolean {
   if (platform !== "win32") return false;
   return RETRYABLE.has((error as NodeJS.ErrnoException | undefined)?.code ?? "");

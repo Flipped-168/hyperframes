@@ -138,7 +138,7 @@ describe("a restore of a file the preview is serving", () => {
     read.pause();
     let openAtReplace = true;
     vi.mocked(fs.renameSync).mockImplementation((from, to) => {
-      openAtReplace = !read.destroyed;
+      openAtReplace = !read.closed;
       return realRenameSync(from, to);
     });
 

@@ -9,7 +9,7 @@ import {
   renameWithRetry,
   renameWithRetryAsync,
 } from "@hyperframes/core/rename-retry";
-import { stopServing } from "../helpers/servedFiles.js";
+import { stopServingAndClose } from "../helpers/servedFiles.js";
 
 /** File contents stored once by sha256, text and binary alike. */
 export interface BlobStore {
@@ -53,12 +53,10 @@ async function cloneOrStream(from: string, to: string): Promise<void> {
   }
 }
 
-/** How a restore Windows would not rename into place went: written and checked, written wrong, or not written. */
 export type InPlaceOutcome = "restored" | "mismatch" | "failed";
 type InPlaceListener = (absPath: string, outcome: InPlaceOutcome) => void;
 const inPlaceListeners = new Set<InPlaceListener>();
 
-/** Hears each restore that had to write a held file in place on Windows. */
 export function onRestoredInPlace(listener: InPlaceListener): () => void {
   inPlaceListeners.add(listener);
   return () => inPlaceListeners.delete(listener);
@@ -75,7 +73,7 @@ async function cloneOrCopy(
   try {
     await copyFile(from, temp, constants.COPYFILE_FICLONE);
     beforeReplace?.();
-    stopServing(to);
+    await stopServingAndClose(to);
     try {
       renameWithRetry(temp, to);
     } catch (error) {
@@ -87,8 +85,7 @@ async function cloneOrCopy(
   }
 }
 
-/** Windows still refuses the rename after its retry: something outside the app holds the file. Its bytes go in place,
- * synced, then checked against the blob; a mismatch fails the restore and the blob stays. */
+// Something outside the app still holds the file: write in place, sync, and fail on any mismatch with the blob.
 async function writeInPlace(temp: string, to: string, hash: string): Promise<void> {
   let outcome: InPlaceOutcome = "failed";
   try {
