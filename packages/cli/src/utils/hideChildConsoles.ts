@@ -9,23 +9,18 @@ const ENTRY_POINTS = ["spawn", "spawnSync", "exec", "execSync", "execFile", "exe
 
 /** The call's arguments with `windowsHide: true` set unless the caller chose either way. */
 function hidden(command: string, rest: unknown[]): unknown[] {
-  const at = rest.findIndex((arg) => arg && typeof arg === "object" && !Array.isArray(arg));
+  const args = [...rest];
+  const at = args.findIndex((arg) => arg && typeof arg === "object" && !Array.isArray(arg));
   if (at >= 0) {
-    const options = rest[at] as { windowsHide?: boolean };
-    return [command, ...rest.with(at, { windowsHide: true, ...options })];
+    args[at] = { windowsHide: true, ...(args[at] as object) };
+  } else {
+    const callback = args.findIndex((arg) => typeof arg === "function");
+    args.splice(callback < 0 ? args.length : callback, 0, { windowsHide: true });
   }
-  const callback = rest.findIndex((arg) => typeof arg === "function");
-  return [
-    command,
-    ...rest.toSpliced(callback < 0 ? rest.length : callback, 0, { windowsHide: true }),
-  ];
+  return [command, ...args];
 }
 
-/**
- * On Windows a console program started without `windowsHide` opens a visible console window, and so does every
- * child it starts. Every child this process starts, ours and our dependencies', is hidden unless it opts out
- * with `windowsHide: false` (a browser or app the person is meant to see).
- */
+/** Windows opens a console window for every child that does not say `windowsHide`; `false` opts out. */
 export function hideChildConsoles(
   target: ChildProcessModule = childProcess as unknown as ChildProcessModule,
   platform: NodeJS.Platform = process.platform,
