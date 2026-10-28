@@ -117,7 +117,7 @@ vi.mock("../registry/remote.js", () => ({
 // The terminal and CI switches below decide attendance; the agent running the suite must not.
 vi.mock("../telemetry/agent_runtime.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../telemetry/agent_runtime.js")>()),
-  detectAgentRuntime: () => null,
+  isAgentDriven: () => false,
 }));
 vi.mock("@clack/prompts", () => ({
   confirm: async () => state.confirmAnswer,
