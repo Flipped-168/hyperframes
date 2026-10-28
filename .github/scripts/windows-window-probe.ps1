@@ -1,5 +1,5 @@
 # Renders the canary while a hidden parent (no console, like an embedding app) watches for visible top-level windows.
-param([Parameter(Mandatory)][string]$Cli, [Parameter(Mandatory)][string]$Project)
+param([Parameter(Mandatory)][string]$Cli, [Parameter(Mandatory)][string]$Project, [Parameter(Mandatory)][string]$Chrome)
 $ErrorActionPreference = 'Stop'
 
 Add-Type @'
@@ -42,7 +42,34 @@ $baseline = Snapshot
 Write-Host "Visible top-level windows before the render: $($baseline.Count)"
 $baseline.Values | Format-Table -AutoSize | Out-String | Write-Host
 
-# The launcher has no console and no window, so any window below was created by the render's own children.
+function Watch([string[]]$NodeArgs) {
+  $script:baseline = Snapshot
+  $p = Start-Process -FilePath node -ArgumentList $NodeArgs -WindowStyle Hidden -PassThru
+  $found = @{}
+  while (-not $p.HasExited) {
+    foreach ($entry in (Snapshot).GetEnumerator()) {
+      if (-not $baseline.ContainsKey($entry.Key) -and -not $found.ContainsKey($entry.Key)) { $found[$entry.Key] = $entry.Value }
+    }
+    Start-Sleep -Milliseconds 50
+  }
+  $p.WaitForExit()
+  [pscustomobject]@{ Exit = $p.ExitCode; Windows = $found }
+}
+
+# The launcher has no console and no window, so any window below was created by its own children.
+$spawn = Join-Path $env:GITHUB_WORKSPACE '.github/scripts/spawn-probe.mjs'
+$ffmpeg = (Get-Command ffmpeg.exe).Source
+$ffprobe = (Get-Command ffprobe.exe).Source
+Write-Host "--- one spawn at a time (windowsHide: true) ---"
+foreach ($target in @(@('chrome', $Chrome), @('ffmpeg', $ffmpeg), @('ffprobe', $ffprobe))) {
+  foreach ($detached in @('0', '1')) {
+    $r = Watch @($spawn, $target[1], $detached)
+    Write-Host ("{0,-8} detached={1} -> {2} new window(s)" -f $target[0], $detached, $r.Windows.Count)
+    $r.Windows.Values | ForEach-Object { Write-Host "    $($_.Process) class=$($_.Class) title=[$($_.Title)]" }
+  }
+}
+
+Write-Host "--- full render ---"
 $launcher = Join-Path $env:RUNNER_TEMP 'launch-render.mjs'
 @'
 import { spawn } from "node:child_process";
@@ -50,24 +77,9 @@ const [cli, cwd] = process.argv.slice(2);
 const child = spawn(process.execPath, [cli, "render", "--fps", "30", "--quality", "draft", "--workers", "2", "--output", "renders/probe.mp4"], { cwd, windowsHide: true, stdio: "ignore" });
 child.on("exit", (code) => process.exit(code ?? 1));
 '@ | Set-Content -Encoding utf8 $launcher
-
-$render = Start-Process -FilePath node -ArgumentList @($launcher, $Cli, $Project) -WindowStyle Hidden -PassThru
-$new = @{}
-while (-not $render.HasExited) {
-  foreach ($entry in (Snapshot).GetEnumerator()) {
-    if (-not $baseline.ContainsKey($entry.Key) -and -not $new.ContainsKey($entry.Key)) {
-      $row = $entry.Value
-      $cim = Get-CimInstance Win32_Process -Filter "ProcessId=$($row.Pid)" -ErrorAction SilentlyContinue
-      $parent = if ($cim) { Get-CimInstance Win32_Process -Filter "ProcessId=$($cim.ParentProcessId)" -ErrorAction SilentlyContinue }
-      $row.Detail = "cmd=[$($cim.CommandLine)] parent=[$($parent.Name) $($parent.CommandLine)]"
-      $new[$entry.Key] = $row
-    }
-  }
-  Start-Sleep -Milliseconds 50
-}
-$render.WaitForExit()
-Write-Host "Render exit code: $($render.ExitCode)"
-Write-Host "New visible windows during the render: $($new.Count)"
-$new.Values | ForEach-Object { Write-Host "$($_.Process) pid=$($_.Pid) class=$($_.Class) title=[$($_.Title)] $($_.Detail)" }
-if ($render.ExitCode -ne 0) { throw "render failed" }
-if ($new.Count -gt 0) { throw "the render opened $($new.Count) visible window(s)" }
+$render = Watch @($launcher, $Cli, $Project)
+Write-Host "Render exit code: $($render.Exit)"
+Write-Host "New visible windows during the render: $($render.Windows.Count)"
+$render.Windows.Values | ForEach-Object { Write-Host "$($_.Process) class=$($_.Class) title=[$($_.Title)]" }
+if ($render.Exit -ne 0) { throw "render failed" }
+if ($render.Windows.Count -gt 0) { throw "the render opened $($render.Windows.Count) visible window(s)" }
