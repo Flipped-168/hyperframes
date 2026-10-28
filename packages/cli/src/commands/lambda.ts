@@ -1,4 +1,4 @@
-import { failCommand } from "../utils/commandResult.js";
+import { failCommand, failUsage } from "../utils/commandResult.js";
 /**
  * `hyperframes lambda` — top-level dispatcher for AWS Lambda subcommands.
  *
@@ -296,7 +296,7 @@ export default defineCommand({
           console.error(
             "[lambda sites create] usage: hyperframes lambda sites create <projectDir>",
           );
-          failCommand();
+          failUsage();
         }
         const { runSitesCreate } = await import("./lambda/sites.js");
         await runSitesCreate({
@@ -313,7 +313,7 @@ export default defineCommand({
           console.error(
             "[lambda render] usage: hyperframes lambda render <projectDir> --width <px> --height <px>",
           );
-          failCommand();
+          failUsage();
         }
         const width = parsePositiveInt(args.width, "--width");
         const height = parsePositiveInt(args.height, "--height");
@@ -363,14 +363,14 @@ export default defineCommand({
           console.error(
             "[lambda render-batch] usage: hyperframes lambda render-batch <projectDir> --batch <path.jsonl> --width <px> --height <px>",
           );
-          failCommand();
+          failUsage();
         }
         const batch = args.batch as string | undefined;
         if (!batch) {
           console.error(
             "[lambda render-batch] --batch <path.jsonl> is required. Each line is a JSON object with at least { outputKey: '...' }.",
           );
-          failCommand();
+          failUsage();
         }
         const width = parsePositiveInt(args.width, "--width");
         const height = parsePositiveInt(args.height, "--height");
@@ -417,7 +417,7 @@ export default defineCommand({
           console.error(
             "[lambda progress] usage: hyperframes lambda progress <renderId | executionArn>",
           );
-          failCommand();
+          failUsage();
         }
         const { runProgress } = await import("./lambda/progress.js");
         await runProgress({ target, stackName, json: Boolean(args.json) });
@@ -434,7 +434,7 @@ export default defineCommand({
           console.error(
             `[lambda policies] usage: hyperframes lambda policies <role|user|validate> [args]`,
           );
-          failCommand();
+          failUsage();
         }
         const { runPolicies } = await import("./lambda/policies.js");
         await runPolicies({

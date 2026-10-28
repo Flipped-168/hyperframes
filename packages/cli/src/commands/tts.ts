@@ -134,7 +134,7 @@ export default defineCommand({
       const requested = String(args.lang).toLowerCase();
       if (!isSupportedLang(requested)) {
         errorBox("Invalid --lang", `Got "${args.lang}". Must be one of: ${langList}.`);
-        failCommand();
+        failUsage();
       }
       lang = requested;
     }

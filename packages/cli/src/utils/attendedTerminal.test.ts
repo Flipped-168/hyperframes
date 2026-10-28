@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const agent = vi.hoisted(() => ({ runtime: null as string | null }));
-vi.mock("../telemetry/agent_runtime.js", () => ({ detectAgentRuntime: () => agent.runtime }));
+// `driven: undefined` runs the real detection against process.env.
+const agent = vi.hoisted(() => ({ driven: false as boolean | undefined }));
+vi.mock("../telemetry/agent_runtime.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../telemetry/agent_runtime.js")>();
+  return { ...actual, isAgentDriven: () => agent.driven ?? actual.isAgentDriven() };
+});
 
 const ttys = { stdin: process.stdin.isTTY, stdout: process.stdout.isTTY };
 
@@ -35,7 +39,7 @@ describe("isUnattended", () => {
   beforeEach(() => {
     vi.stubEnv("CI", "");
     vi.stubEnv("HYPERFRAMES_AGENT", "");
-    agent.runtime = null;
+    agent.driven = false;
     setTty(true, true);
   });
   afterEach(() => {
@@ -61,7 +65,35 @@ describe("isUnattended", () => {
   });
 
   it("is unattended when a coding agent is detected", async () => {
-    agent.runtime = "claude_code";
+    agent.driven = true;
+    expect((await load()).isUnattended()).toBe(true);
+  });
+
+  it.each([
+    ["TERM_PROGRAM", "cursor"],
+    ["TERM_PROGRAM", "windsurf"],
+    ["REPL_ID", "abc"],
+  ])(
+    "a person in an editor or hosted terminal (%s=%s) at a TTY is attended",
+    async (name, value) => {
+      for (const key of Object.keys(process.env)) {
+        if (
+          /^(CLAUDE|CODEX_|CURSOR_|BOBSHELL|GEMINI_CLI|CLINE_|HERMES_|PI_CODING|CRUSH|OPENCLAW)/.test(
+            key,
+          )
+        ) {
+          vi.stubEnv(key, undefined);
+        }
+      }
+      vi.stubEnv(name, value);
+      agent.driven = undefined;
+      expect((await load()).isUnattended()).toBe(false);
+    },
+  );
+
+  it("Cursor's agent shell is unattended", async () => {
+    vi.stubEnv("CURSOR_AGENT", "1");
+    agent.driven = undefined;
     expect((await load()).isUnattended()).toBe(true);
   });
 

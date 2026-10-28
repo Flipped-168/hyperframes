@@ -140,4 +140,16 @@ describe("agent-mode contract", () => {
       },
     );
   });
+
+  it.each([
+    ["lambda progress"],
+    ["cloudrun progress"],
+    ["capture"],
+    ["remove-background in.mp4"],
+    ["init demo --resolution huge --non-interactive"],
+  ])("`%s` is missing or misusing an argument, a usage error with exit 2", async (args) => {
+    const run = await runAsAgent(args.split(" "));
+    expectQuiet(run);
+    expect(run.code, run.stderr).toBe(2);
+  });
 });

@@ -682,7 +682,7 @@ describe("applyResolutionPreset", () => {
         "--non-interactive",
         "--skip-skills",
       ]);
-      expect(res.status).toBe(1);
+      expect(res.status).toBe(2);
       expect(res.stderr).toContain("Invalid --resolution");
       expect(existsSync(target)).toBe(false);
     } finally {

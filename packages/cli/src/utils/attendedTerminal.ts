@@ -1,4 +1,4 @@
-import { detectAgentRuntime } from "../telemetry/agent_runtime.js";
+import { isAgentDriven } from "../telemetry/agent_runtime.js";
 
 export function envFlagEnabled(name: string): boolean {
   const value = process.env[name]?.trim().toLowerCase();
@@ -20,6 +20,6 @@ let agentDetected: boolean | undefined;
 /** Nobody is at the keyboard: no terminal, CI, a coding agent, or HYPERFRAMES_AGENT=1. Never prompt then. */
 export function isUnattended(): boolean {
   if (!isAttendedTerminal() || process.env["HYPERFRAMES_AGENT"] === "1") return true;
-  agentDetected ??= detectAgentRuntime() !== null;
+  agentDetected ??= isAgentDriven();
   return agentDetected;
 }
