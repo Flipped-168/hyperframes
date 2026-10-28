@@ -1,6 +1,6 @@
 # Runs agent-facing commands from a launcher with no console (like an app that starts an agent), and fails if any
 # of them opens a visible top-level window.
-param([Parameter(Mandatory)][string]$Cli, [Parameter(Mandatory)][string]$Project, [Parameter(Mandatory)][string]$Chrome)
+param([Parameter(Mandatory)][string]$Cli, [Parameter(Mandatory)][string]$Project)
 $ErrorActionPreference = 'Stop'
 
 Add-Type @'
@@ -51,7 +51,7 @@ function Watch([string]$Name, [int]$Seconds, [string[]]$CliArgs) {
         if ($row.Process -match 'chrome') {
           $q = Get-CimInstance Win32_Process -Filter "ProcessId=$($row.Id)" -ErrorAction SilentlyContinue
           $parent = if ($q) { Get-CimInstance Win32_Process -Filter "ProcessId=$($q.ParentProcessId)" -ErrorAction SilentlyContinue }
-          $row.Cmd = "pid=$($row.Id) parent=[$($parent.Name) $($parent.ProcessId)] cmd=[$((("$($q.CommandLine)") -replace '^.*chrome-headless-shell.exe"? ','').Substring(0, [Math]::Min(260, ("$($q.CommandLine)" -replace '^.*chrome-headless-shell.exe"? ','').Length)))]"
+          $row.Cmd = "pid=$($row.Id) parent=[$($parent.Name) $($parent.ProcessId) main=$((($parent.CommandLine -replace '^.*chrome-headless-shell.exe"? ',''))) ] cmd=[$((("$($q.CommandLine)") -replace '^.*chrome-headless-shell.exe"? ','').Substring(0, [Math]::Min(260, ("$($q.CommandLine)" -replace '^.*chrome-headless-shell.exe"? ','').Length)))]"
         }
         $found[$entry.Key] = $row
       }
@@ -78,25 +78,11 @@ child.on("exit", (code) => { clearTimeout(stop); process.exit(code ?? 0); });
 '@ | Set-Content -Encoding utf8 $launcher
 
 
-function Topology([string]$Name, [string[]]$NodeArgs) {
-  $baseline = Snapshot
-  $p = Start-Process -FilePath node -ArgumentList $NodeArgs -WindowStyle Hidden -PassThru
-  $found = @{}
-  while (-not $p.HasExited) {
-    foreach ($entry in (Snapshot).GetEnumerator()) {
-      if (-not $baseline.ContainsKey($entry.Key)) { $found[$entry.Key] = $entry.Value }
-    }
-    Start-Sleep -Milliseconds 50
-  }
-  $p.WaitForExit()
-  Write-Host ("{0,-28} exit={1} new windows={2}" -f $Name, $p.ExitCode, $found.Count)
-}
-$pageProbe = Join-Path $env:GITHUB_WORKSPACE '.github/scripts/chrome-page-probe.mjs'
-Topology 'chrome page, direct' @($pageProbe, $env:GITHUB_WORKSPACE, $Chrome)
-Topology 'chrome page, one hidden hop' @($pageProbe, $env:GITHUB_WORKSPACE, $Chrome, 'hop')
-
 $runs = @(
   (Watch 'render' 0 @('render', '--fps', '30', '--quality', 'draft', '--workers', '2', '--output', 'renders/probe.mp4')),
+  (Watch 'render-1-worker' 0 @('render', '--fps', '30', '--quality', 'draft', '--workers', '1', '--output', 'renders/probe1.mp4')),
+  (Watch 'render-no-gpu' 0 @('render', '--fps', '30', '--quality', 'draft', '--workers', '1', '--no-browser-gpu', '--output', 'renders/probe2.mp4')),
+  (Watch 'render-lowmem' 0 @('render', '--fps', '30', '--quality', 'draft', '--workers', '1', '--low-memory-mode', '--no-browser-gpu', '--output', 'renders/probe3.mp4')),
   (Watch 'check' 0 @('check')),
   (Watch 'check-warm' 0 @('check')),
   (Watch 'snapshot' 0 @('snapshot', '--frames', '2')),
