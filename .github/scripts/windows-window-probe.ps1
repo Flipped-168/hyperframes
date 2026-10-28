@@ -85,7 +85,13 @@ const [cli, cwd] = process.argv.slice(2);
 const child = spawn(process.execPath, [cli, "render", "--fps", "30", "--quality", "draft", "--workers", "2", "--output", "renders/probe.mp4"], { cwd, windowsHide: true, stdio: "ignore" });
 child.on("exit", (code) => process.exit(code ?? 1));
 '@ | Set-Content -Encoding utf8 $launcher
+$audit = Join-Path $env:RUNNER_TEMP 'spawn-audit.log'
+$env:HF_SPAWN_AUDIT = $audit
+$env:NODE_OPTIONS = "--require $env:GITHUB_WORKSPACE/.github/scripts/spawn-audit.cjs"
 $render = Watch @($launcher, $Cli, $Project)
+Remove-Item Env:NODE_OPTIONS
+Write-Host "--- child processes started without windowsHide ---"
+if (Test-Path $audit) { Get-Content $audit | Sort-Object -Unique | ForEach-Object { Write-Host "unhidden $_" } }
 $script:procs.Values | Sort-Object | ForEach-Object { Write-Host "proc $_" }
 Write-Host "Render exit code: $($render.Exit)"
 Write-Host "New visible windows during the render: $($render.Windows.Count)"
