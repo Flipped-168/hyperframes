@@ -78,19 +78,18 @@ child.on("exit", (code) => { clearTimeout(stop); process.exit(code ?? 0); });
 '@ | Set-Content -Encoding utf8 $launcher
 
 
-function EngineLaunch([string]$Name, [string]$Hop) {
+function Variant([string]$Name) {
   $baseline = Snapshot
-  $p = Start-Process -FilePath node -ArgumentList @((Join-Path $env:GITHUB_WORKSPACE '.github/scripts/engine-launch-probe.mjs'), $env:GITHUB_WORKSPACE, $Chrome, $Hop) -WindowStyle Hidden -PassThru
+  $p = Start-Process -FilePath node -ArgumentList @((Join-Path $env:GITHUB_WORKSPACE '.github/scripts/launch-matrix-probe.mjs'), $env:GITHUB_WORKSPACE, $Chrome, $Name) -WindowStyle Hidden -PassThru
   $found = 0
   while (-not $p.HasExited) {
     foreach ($entry in (Snapshot).GetEnumerator()) { if (-not $baseline.ContainsKey($entry.Key)) { $found++; $baseline[$entry.Key] = $entry.Value } }
     Start-Sleep -Milliseconds 50
   }
   $p.WaitForExit()
-  Write-Host ("{0,-34} exit={1} new windows={2}" -f $Name, $p.ExitCode, $found)
+  Write-Host ("variant {0,-34} exit={1} new windows={2}" -f $Name, $p.ExitCode, $found)
 }
-EngineLaunch 'engine browser pool, direct' ''
-EngineLaunch 'engine browser pool, one hidden hop' 'hop'
+foreach ($v in @('puppeteer', 'core', 'puppeteer-noargs', 'core-noargs', 'puppeteer-nodetach', 'puppeteer-noenv', 'puppeteer-viewport', 'puppeteer-sigint')) { Variant $v }
 
 $runs = @(
   (Watch 'render' 0 @('render', '--fps', '30', '--quality', 'draft', '--workers', '2', '--output', 'renders/probe.mp4')),
