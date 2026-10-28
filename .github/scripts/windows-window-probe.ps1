@@ -73,6 +73,10 @@ foreach ($target in @(@('chrome', $Chrome), @('ffmpeg', $ffmpeg), @('ffprobe', $
   }
 }
 
+$r = Watch @($spawn, $Chrome, '0', '1')
+Write-Host ("chrome   nested -> {0} new window(s)" -f $r.Windows.Count)
+$r.Windows.Values | ForEach-Object { Write-Host "    $($_.Process) class=$($_.Class) title=[$($_.Title)]" }
+
 Write-Host "--- full render ---"
 $launcher = Join-Path $env:RUNNER_TEMP 'launch-render.mjs'
 @'
