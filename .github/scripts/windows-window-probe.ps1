@@ -1,6 +1,6 @@
 # Runs agent-facing commands from a launcher with no console (like an app that starts an agent), and fails if any
 # of them opens a visible top-level window.
-param([Parameter(Mandatory)][string]$Cli, [Parameter(Mandatory)][string]$Project)
+param([Parameter(Mandatory)][string]$Cli, [Parameter(Mandatory)][string]$Project, [Parameter(Mandatory)][string]$Chrome)
 $ErrorActionPreference = 'Stop'
 
 Add-Type @'
@@ -78,11 +78,44 @@ child.on("exit", (code) => { clearTimeout(stop); process.exit(code ?? 0); });
 '@ | Set-Content -Encoding utf8 $launcher
 
 
+# Smallest set of the CLI's own Chrome arguments that still opens a window (delta debugging).
+$argsProbe = Join-Path $env:GITHUB_WORKSPACE '.github/scripts/chrome-args-probe.mjs'
+$argsFile = Join-Path $env:RUNNER_TEMP 'chrome-args.txt'
+$script:tries = 0
+function Opens([string[]]$Args) {
+  $script:tries++
+  Set-Content -Path $argsFile -Value $Args
+  $baseline = Snapshot
+  $p = Start-Process -FilePath node -ArgumentList @($argsProbe, $env:GITHUB_WORKSPACE, $Chrome, $argsFile, (Join-Path $env:RUNNER_TEMP "profile-$script:tries")) -WindowStyle Hidden -PassThru
+  $opened = $false
+  while (-not $p.HasExited) {
+    foreach ($entry in (Snapshot).GetEnumerator()) { if (-not $baseline.ContainsKey($entry.Key)) { $opened = $true } }
+    Start-Sleep -Milliseconds 50
+  }
+  $p.WaitForExit()
+  return $opened
+}
+$current = @(Get-Content (Join-Path $env:GITHUB_WORKSPACE '.github/scripts/chrome-args.txt'))
+if (Opens $current) {
+  Write-Host "The CLI's Chrome arguments ($($current.Count)) open a window; narrowing"
+  $n = 2
+  while ($current.Count -ge 2 -and $script:tries -lt 80) {
+    $size = [math]::Ceiling($current.Count / $n)
+    $reduced = $false
+    for ($start = 0; $start -lt $current.Count; $start += $size) {
+      $complement = @($current | Select-Object -First $start) + @($current | Select-Object -Skip ($start + $size))
+      if ($complement.Count -gt 0 -and (Opens $complement)) { $current = $complement; $n = [math]::Max($n - 1, 2); $reduced = $true; break }
+    }
+    if (-not $reduced) { if ($n -ge $current.Count) { break }; $n = [math]::Min($current.Count, $n * 2) }
+  }
+  Write-Host "Smallest set that still opens a window after $script:tries launches:"
+  $current | ForEach-Object { Write-Host "    $_" }
+} else {
+  Write-Host "The CLI's Chrome arguments, launched on their own, open no window ($script:tries launch)"
+}
+
 $runs = @(
   (Watch 'render' 0 @('render', '--fps', '30', '--quality', 'draft', '--workers', '2', '--output', 'renders/probe.mp4')),
-  (Watch 'render-1-worker' 0 @('render', '--fps', '30', '--quality', 'draft', '--workers', '1', '--output', 'renders/probe1.mp4')),
-  (Watch 'render-no-gpu' 0 @('render', '--fps', '30', '--quality', 'draft', '--workers', '1', '--no-browser-gpu', '--output', 'renders/probe2.mp4')),
-  (Watch 'render-lowmem' 0 @('render', '--fps', '30', '--quality', 'draft', '--workers', '1', '--low-memory-mode', '--no-browser-gpu', '--output', 'renders/probe3.mp4')),
   (Watch 'check' 0 @('check')),
   (Watch 'check-warm' 0 @('check')),
   (Watch 'snapshot' 0 @('snapshot', '--frames', '2')),
