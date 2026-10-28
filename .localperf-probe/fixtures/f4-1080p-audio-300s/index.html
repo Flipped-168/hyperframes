@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.7/dist/gsap.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { overflow: hidden; background: #0b1020; font-family: system-ui, sans-serif; color: #fff; }
+    #grad { position: absolute; inset: 0; background: linear-gradient(120deg, #1a1a2e, #0f3460 50%, #533483); }
+    .card { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 32px; }
+    .card h1 { font-size: 120px; }
+    .card p { font-size: 44px; opacity: .8; }
+  </style>
+</head>
+<body>
+  <div id="root" data-composition-id="f4" data-start="0" data-duration="300" data-width="1920" data-height="1080" data-fps="30">
+    <div id="grad" data-start="0" data-duration="300" data-track-index="0"></div>
+    <audio id="music" src="assets/music.m4a" data-start="0" data-duration="300" data-volume="1"></audio>
+    <div class="card" id="c0" data-start="0" data-duration="5" data-track-index="1"><h1>Scene 1</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c1" data-start="5" data-duration="5" data-track-index="2"><h1>Scene 2</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c2" data-start="10" data-duration="5" data-track-index="1"><h1>Scene 3</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c3" data-start="15" data-duration="5" data-track-index="2"><h1>Scene 4</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c4" data-start="20" data-duration="5" data-track-index="1"><h1>Scene 5</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c5" data-start="25" data-duration="5" data-track-index="2"><h1>Scene 6</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c6" data-start="30" data-duration="5" data-track-index="1"><h1>Scene 7</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c7" data-start="35" data-duration="5" data-track-index="2"><h1>Scene 8</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c8" data-start="40" data-duration="5" data-track-index="1"><h1>Scene 9</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c9" data-start="45" data-duration="5" data-track-index="2"><h1>Scene 10</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c10" data-start="50" data-duration="5" data-track-index="1"><h1>Scene 11</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c11" data-start="55" data-duration="5" data-track-index="2"><h1>Scene 12</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c12" data-start="60" data-duration="5" data-track-index="1"><h1>Scene 13</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c13" data-start="65" data-duration="5" data-track-index="2"><h1>Scene 14</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c14" data-start="70" data-duration="5" data-track-index="1"><h1>Scene 15</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c15" data-start="75" data-duration="5" data-track-index="2"><h1>Scene 16</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c16" data-start="80" data-duration="5" data-track-index="1"><h1>Scene 17</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c17" data-start="85" data-duration="5" data-track-index="2"><h1>Scene 18</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c18" data-start="90" data-duration="5" data-track-index="1"><h1>Scene 19</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c19" data-start="95" data-duration="5" data-track-index="2"><h1>Scene 20</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c20" data-start="100" data-duration="5" data-track-index="1"><h1>Scene 21</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c21" data-start="105" data-duration="5" data-track-index="2"><h1>Scene 22</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c22" data-start="110" data-duration="5" data-track-index="1"><h1>Scene 23</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c23" data-start="115" data-duration="5" data-track-index="2"><h1>Scene 24</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c24" data-start="120" data-duration="5" data-track-index="1"><h1>Scene 25</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c25" data-start="125" data-duration="5" data-track-index="2"><h1>Scene 26</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c26" data-start="130" data-duration="5" data-track-index="1"><h1>Scene 27</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c27" data-start="135" data-duration="5" data-track-index="2"><h1>Scene 28</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c28" data-start="140" data-duration="5" data-track-index="1"><h1>Scene 29</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c29" data-start="145" data-duration="5" data-track-index="2"><h1>Scene 30</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c30" data-start="150" data-duration="5" data-track-index="1"><h1>Scene 31</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c31" data-start="155" data-duration="5" data-track-index="2"><h1>Scene 32</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c32" data-start="160" data-duration="5" data-track-index="1"><h1>Scene 33</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c33" data-start="165" data-duration="5" data-track-index="2"><h1>Scene 34</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c34" data-start="170" data-duration="5" data-track-index="1"><h1>Scene 35</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c35" data-start="175" data-duration="5" data-track-index="2"><h1>Scene 36</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c36" data-start="180" data-duration="5" data-track-index="1"><h1>Scene 37</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c37" data-start="185" data-duration="5" data-track-index="2"><h1>Scene 38</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c38" data-start="190" data-duration="5" data-track-index="1"><h1>Scene 39</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c39" data-start="195" data-duration="5" data-track-index="2"><h1>Scene 40</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c40" data-start="200" data-duration="5" data-track-index="1"><h1>Scene 41</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c41" data-start="205" data-duration="5" data-track-index="2"><h1>Scene 42</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c42" data-start="210" data-duration="5" data-track-index="1"><h1>Scene 43</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c43" data-start="215" data-duration="5" data-track-index="2"><h1>Scene 44</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c44" data-start="220" data-duration="5" data-track-index="1"><h1>Scene 45</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c45" data-start="225" data-duration="5" data-track-index="2"><h1>Scene 46</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c46" data-start="230" data-duration="5" data-track-index="1"><h1>Scene 47</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c47" data-start="235" data-duration="5" data-track-index="2"><h1>Scene 48</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c48" data-start="240" data-duration="5" data-track-index="1"><h1>Scene 49</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c49" data-start="245" data-duration="5" data-track-index="2"><h1>Scene 50</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c50" data-start="250" data-duration="5" data-track-index="1"><h1>Scene 51</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c51" data-start="255" data-duration="5" data-track-index="2"><h1>Scene 52</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c52" data-start="260" data-duration="5" data-track-index="1"><h1>Scene 53</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c53" data-start="265" data-duration="5" data-track-index="2"><h1>Scene 54</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c54" data-start="270" data-duration="5" data-track-index="1"><h1>Scene 55</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c55" data-start="275" data-duration="5" data-track-index="2"><h1>Scene 56</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c56" data-start="280" data-duration="5" data-track-index="1"><h1>Scene 57</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c57" data-start="285" data-duration="5" data-track-index="2"><h1>Scene 58</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c58" data-start="290" data-duration="5" data-track-index="1"><h1>Scene 59</h1><p>Five minutes of animated text over music.</p></div>
+    <div class="card" id="c59" data-start="295" data-duration="5" data-track-index="2"><h1>Scene 60</h1><p>Five minutes of animated text over music.</p></div>
+    <script>
+      const tl = gsap.timeline({ paused: true });
+      tl.fromTo("#grad", { filter: "hue-rotate(0deg)" }, { filter: "hue-rotate(360deg)", duration: 300, ease: "none" }, 0);
+      tl.fromTo("#c0 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 0.1);
+      tl.fromTo("#c0 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 0.6);
+      tl.to("#c0", { opacity: 0, duration: 0.4 }, 4.6);
+      tl.fromTo("#c1 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 5.1);
+      tl.fromTo("#c1 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 5.6);
+      tl.to("#c1", { opacity: 0, duration: 0.4 }, 9.6);
+      tl.fromTo("#c2 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 10.1);
+      tl.fromTo("#c2 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 10.6);
+      tl.to("#c2", { opacity: 0, duration: 0.4 }, 14.6);
+      tl.fromTo("#c3 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 15.1);
+      tl.fromTo("#c3 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 15.6);
+      tl.to("#c3", { opacity: 0, duration: 0.4 }, 19.6);
+      tl.fromTo("#c4 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 20.1);
+      tl.fromTo("#c4 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 20.6);
+      tl.to("#c4", { opacity: 0, duration: 0.4 }, 24.6);
+      tl.fromTo("#c5 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 25.1);
+      tl.fromTo("#c5 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 25.6);
+      tl.to("#c5", { opacity: 0, duration: 0.4 }, 29.6);
+      tl.fromTo("#c6 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 30.1);
+      tl.fromTo("#c6 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 30.6);
+      tl.to("#c6", { opacity: 0, duration: 0.4 }, 34.6);
+      tl.fromTo("#c7 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 35.1);
+      tl.fromTo("#c7 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 35.6);
+      tl.to("#c7", { opacity: 0, duration: 0.4 }, 39.6);
+      tl.fromTo("#c8 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 40.1);
+      tl.fromTo("#c8 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 40.6);
+      tl.to("#c8", { opacity: 0, duration: 0.4 }, 44.6);
+      tl.fromTo("#c9 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 45.1);
+      tl.fromTo("#c9 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 45.6);
+      tl.to("#c9", { opacity: 0, duration: 0.4 }, 49.6);
+      tl.fromTo("#c10 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 50.1);
+      tl.fromTo("#c10 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 50.6);
+      tl.to("#c10", { opacity: 0, duration: 0.4 }, 54.6);
+      tl.fromTo("#c11 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 55.1);
+      tl.fromTo("#c11 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 55.6);
+      tl.to("#c11", { opacity: 0, duration: 0.4 }, 59.6);
+      tl.fromTo("#c12 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 60.1);
+      tl.fromTo("#c12 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 60.6);
+      tl.to("#c12", { opacity: 0, duration: 0.4 }, 64.6);
+      tl.fromTo("#c13 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 65.1);
+      tl.fromTo("#c13 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 65.6);
+      tl.to("#c13", { opacity: 0, duration: 0.4 }, 69.6);
+      tl.fromTo("#c14 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 70.1);
+      tl.fromTo("#c14 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 70.6);
+      tl.to("#c14", { opacity: 0, duration: 0.4 }, 74.6);
+      tl.fromTo("#c15 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 75.1);
+      tl.fromTo("#c15 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 75.6);
+      tl.to("#c15", { opacity: 0, duration: 0.4 }, 79.6);
+      tl.fromTo("#c16 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 80.1);
+      tl.fromTo("#c16 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 80.6);
+      tl.to("#c16", { opacity: 0, duration: 0.4 }, 84.6);
+      tl.fromTo("#c17 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 85.1);
+      tl.fromTo("#c17 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 85.6);
+      tl.to("#c17", { opacity: 0, duration: 0.4 }, 89.6);
+      tl.fromTo("#c18 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 90.1);
+      tl.fromTo("#c18 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 90.6);
+      tl.to("#c18", { opacity: 0, duration: 0.4 }, 94.6);
+      tl.fromTo("#c19 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 95.1);
+      tl.fromTo("#c19 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 95.6);
+      tl.to("#c19", { opacity: 0, duration: 0.4 }, 99.6);
+      tl.fromTo("#c20 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 100.1);
+      tl.fromTo("#c20 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 100.6);
+      tl.to("#c20", { opacity: 0, duration: 0.4 }, 104.6);
+      tl.fromTo("#c21 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 105.1);
+      tl.fromTo("#c21 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 105.6);
+      tl.to("#c21", { opacity: 0, duration: 0.4 }, 109.6);
+      tl.fromTo("#c22 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 110.1);
+      tl.fromTo("#c22 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 110.6);
+      tl.to("#c22", { opacity: 0, duration: 0.4 }, 114.6);
+      tl.fromTo("#c23 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 115.1);
+      tl.fromTo("#c23 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 115.6);
+      tl.to("#c23", { opacity: 0, duration: 0.4 }, 119.6);
+      tl.fromTo("#c24 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 120.1);
+      tl.fromTo("#c24 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 120.6);
+      tl.to("#c24", { opacity: 0, duration: 0.4 }, 124.6);
+      tl.fromTo("#c25 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 125.1);
+      tl.fromTo("#c25 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 125.6);
+      tl.to("#c25", { opacity: 0, duration: 0.4 }, 129.6);
+      tl.fromTo("#c26 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 130.1);
+      tl.fromTo("#c26 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 130.6);
+      tl.to("#c26", { opacity: 0, duration: 0.4 }, 134.6);
+      tl.fromTo("#c27 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 135.1);
+      tl.fromTo("#c27 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 135.6);
+      tl.to("#c27", { opacity: 0, duration: 0.4 }, 139.6);
+      tl.fromTo("#c28 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 140.1);
+      tl.fromTo("#c28 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 140.6);
+      tl.to("#c28", { opacity: 0, duration: 0.4 }, 144.6);
+      tl.fromTo("#c29 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 145.1);
+      tl.fromTo("#c29 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 145.6);
+      tl.to("#c29", { opacity: 0, duration: 0.4 }, 149.6);
+      tl.fromTo("#c30 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 150.1);
+      tl.fromTo("#c30 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 150.6);
+      tl.to("#c30", { opacity: 0, duration: 0.4 }, 154.6);
+      tl.fromTo("#c31 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 155.1);
+      tl.fromTo("#c31 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 155.6);
+      tl.to("#c31", { opacity: 0, duration: 0.4 }, 159.6);
+      tl.fromTo("#c32 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 160.1);
+      tl.fromTo("#c32 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 160.6);
+      tl.to("#c32", { opacity: 0, duration: 0.4 }, 164.6);
+      tl.fromTo("#c33 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 165.1);
+      tl.fromTo("#c33 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 165.6);
+      tl.to("#c33", { opacity: 0, duration: 0.4 }, 169.6);
+      tl.fromTo("#c34 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 170.1);
+      tl.fromTo("#c34 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 170.6);
+      tl.to("#c34", { opacity: 0, duration: 0.4 }, 174.6);
+      tl.fromTo("#c35 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 175.1);
+      tl.fromTo("#c35 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 175.6);
+      tl.to("#c35", { opacity: 0, duration: 0.4 }, 179.6);
+      tl.fromTo("#c36 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 180.1);
+      tl.fromTo("#c36 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 180.6);
+      tl.to("#c36", { opacity: 0, duration: 0.4 }, 184.6);
+      tl.fromTo("#c37 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 185.1);
+      tl.fromTo("#c37 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 185.6);
+      tl.to("#c37", { opacity: 0, duration: 0.4 }, 189.6);
+      tl.fromTo("#c38 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 190.1);
+      tl.fromTo("#c38 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 190.6);
+      tl.to("#c38", { opacity: 0, duration: 0.4 }, 194.6);
+      tl.fromTo("#c39 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 195.1);
+      tl.fromTo("#c39 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 195.6);
+      tl.to("#c39", { opacity: 0, duration: 0.4 }, 199.6);
+      tl.fromTo("#c40 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 200.1);
+      tl.fromTo("#c40 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 200.6);
+      tl.to("#c40", { opacity: 0, duration: 0.4 }, 204.6);
+      tl.fromTo("#c41 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 205.1);
+      tl.fromTo("#c41 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 205.6);
+      tl.to("#c41", { opacity: 0, duration: 0.4 }, 209.6);
+      tl.fromTo("#c42 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 210.1);
+      tl.fromTo("#c42 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 210.6);
+      tl.to("#c42", { opacity: 0, duration: 0.4 }, 214.6);
+      tl.fromTo("#c43 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 215.1);
+      tl.fromTo("#c43 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 215.6);
+      tl.to("#c43", { opacity: 0, duration: 0.4 }, 219.6);
+      tl.fromTo("#c44 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 220.1);
+      tl.fromTo("#c44 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 220.6);
+      tl.to("#c44", { opacity: 0, duration: 0.4 }, 224.6);
+      tl.fromTo("#c45 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 225.1);
+      tl.fromTo("#c45 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 225.6);
+      tl.to("#c45", { opacity: 0, duration: 0.4 }, 229.6);
+      tl.fromTo("#c46 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 230.1);
+      tl.fromTo("#c46 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 230.6);
+      tl.to("#c46", { opacity: 0, duration: 0.4 }, 234.6);
+      tl.fromTo("#c47 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 235.1);
+      tl.fromTo("#c47 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 235.6);
+      tl.to("#c47", { opacity: 0, duration: 0.4 }, 239.6);
+      tl.fromTo("#c48 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 240.1);
+      tl.fromTo("#c48 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 240.6);
+      tl.to("#c48", { opacity: 0, duration: 0.4 }, 244.6);
+      tl.fromTo("#c49 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 245.1);
+      tl.fromTo("#c49 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 245.6);
+      tl.to("#c49", { opacity: 0, duration: 0.4 }, 249.6);
+      tl.fromTo("#c50 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 250.1);
+      tl.fromTo("#c50 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 250.6);
+      tl.to("#c50", { opacity: 0, duration: 0.4 }, 254.6);
+      tl.fromTo("#c51 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 255.1);
+      tl.fromTo("#c51 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 255.6);
+      tl.to("#c51", { opacity: 0, duration: 0.4 }, 259.6);
+      tl.fromTo("#c52 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 260.1);
+      tl.fromTo("#c52 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 260.6);
+      tl.to("#c52", { opacity: 0, duration: 0.4 }, 264.6);
+      tl.fromTo("#c53 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 265.1);
+      tl.fromTo("#c53 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 265.6);
+      tl.to("#c53", { opacity: 0, duration: 0.4 }, 269.6);
+      tl.fromTo("#c54 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 270.1);
+      tl.fromTo("#c54 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 270.6);
+      tl.to("#c54", { opacity: 0, duration: 0.4 }, 274.6);
+      tl.fromTo("#c55 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 275.1);
+      tl.fromTo("#c55 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 275.6);
+      tl.to("#c55", { opacity: 0, duration: 0.4 }, 279.6);
+      tl.fromTo("#c56 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 280.1);
+      tl.fromTo("#c56 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 280.6);
+      tl.to("#c56", { opacity: 0, duration: 0.4 }, 284.6);
+      tl.fromTo("#c57 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 285.1);
+      tl.fromTo("#c57 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 285.6);
+      tl.to("#c57", { opacity: 0, duration: 0.4 }, 289.6);
+      tl.fromTo("#c58 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 290.1);
+      tl.fromTo("#c58 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 290.6);
+      tl.to("#c58", { opacity: 0, duration: 0.4 }, 294.6);
+      tl.fromTo("#c59 h1", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 295.1);
+      tl.fromTo("#c59 p", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 295.6);
+      tl.to("#c59", { opacity: 0, duration: 0.4 }, 299.6);
+      window.__timelines["f4"] = tl;
+    </script>
+  </div>
+</body>
+</html>

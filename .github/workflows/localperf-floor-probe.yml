@@ -1,0 +1,43 @@
+name: localperf floor probe
+on:
+  push:
+    branches: [localperf/floor-probe]
+jobs:
+  floor:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 150
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .localperf-probe
+          lfs: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: ffmpeg
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then choco install ffmpeg -y --no-progress >/dev/null; else sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null; fi
+          ffmpeg -version | head -1
+          nproc || echo "$NUMBER_OF_PROCESSORS"
+      - name: cli
+        run: mkdir -p "$RUNNER_TEMP/cli" && cd "$RUNNER_TEMP/cli" && npm init -y >/dev/null && npm install --no-audit --no-fund hyperframes@0.8.210
+      - name: assets
+        run: bash .localperf-probe/mkassets.sh
+      - name: bench
+        run: |
+          cd .localperf-probe
+          node run.mjs base "$RUNNER_TEMP/cli/node_modules/hyperframes/bin/hyperframes.mjs" 3 fixtures/f1-short-portrait fixtures/f2-portrait-42s fixtures/f3-4k-video-60s fixtures/f4-1080p-audio-300s
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: floor-${{ matrix.os }}
+          path: |
+            .localperf-probe/results.jsonl
+            .localperf-probe/logs/
