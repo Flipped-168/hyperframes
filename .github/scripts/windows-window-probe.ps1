@@ -1,6 +1,6 @@
 # Runs agent-facing commands from a launcher with no console (like an app that starts an agent), and fails if any
 # of them opens a visible top-level window.
-param([Parameter(Mandatory)][string]$Cli, [Parameter(Mandatory)][string]$Project, [Parameter(Mandatory)][string]$Chrome, [Parameter(Mandatory)][string]$Source)
+param([Parameter(Mandatory)][string]$Cli, [Parameter(Mandatory)][string]$Project)
 $ErrorActionPreference = 'Stop'
 
 Add-Type @'
@@ -34,7 +34,7 @@ function Snapshot {
   $seen = @{}
   foreach ($w in [Windows]::Visible()) {
     $proc = Get-Process -Id ([int]$w[1]) -ErrorAction SilentlyContinue
-    $seen[$w[0]] = [pscustomobject]@{ Process = $proc.ProcessName; Class = $w[2]; Title = $w[3] }
+    $seen[$w[0]] = [pscustomobject]@{ Process = $proc.ProcessName; Id = $w[1]; Class = $w[2]; Title = $w[3]; Cmd = '' }
   }
   $seen
 }
@@ -46,14 +46,22 @@ function Watch([string]$Name, [int]$Seconds, [string[]]$CliArgs) {
   $found = @{}
   while (-not $p.HasExited) {
     foreach ($entry in (Snapshot).GetEnumerator()) {
-      if (-not $baseline.ContainsKey($entry.Key) -and -not $found.ContainsKey($entry.Key)) { $found[$entry.Key] = $entry.Value }
+      if (-not $baseline.ContainsKey($entry.Key) -and -not $found.ContainsKey($entry.Key)) {
+        $row = $entry.Value
+        if ($row.Process -match 'chrome') {
+          $q = Get-CimInstance Win32_Process -Filter "ProcessId=$($row.Id)" -ErrorAction SilentlyContinue
+          $parent = if ($q) { Get-CimInstance Win32_Process -Filter "ProcessId=$($q.ParentProcessId)" -ErrorAction SilentlyContinue }
+          $row.Cmd = "pid=$($row.Id) parent=[$($parent.Name) $($parent.ProcessId)] cmd=[$((("$($q.CommandLine)") -replace '^.*chrome-headless-shell.exe"? ','').Substring(0, [Math]::Min(260, ("$($q.CommandLine)" -replace '^.*chrome-headless-shell.exe"? ','').Length)))]"
+        }
+        $found[$entry.Key] = $row
+      }
     }
     Start-Sleep -Milliseconds 50
   }
   $p.WaitForExit()
   Write-Host ("{0,-10} exit={1} new windows={2}" -f $Name, $p.ExitCode, $found.Count)
   if ($p.ExitCode -ne 0) { Get-Content (Join-Path $env:RUNNER_TEMP "command.log") -Tail 12 | ForEach-Object { Write-Host "    | $_" } }
-  $found.Values | ForEach-Object { Write-Host "    $($_.Process) class=$($_.Class) title=[$($_.Title)]" }
+  $found.Values | ForEach-Object { Write-Host "    $($_.Process) class=$($_.Class) title=[$($_.Title)] $($_.Cmd)" }
   [pscustomobject]@{ Name = $Name; Exit = $p.ExitCode; Windows = $found.Count }
 }
 
@@ -69,29 +77,12 @@ const stop = Number(seconds) > 0 ? setTimeout(() => child.kill(), Number(seconds
 child.on("exit", (code) => { clearTimeout(stop); process.exit(code ?? 0); });
 '@ | Set-Content -Encoding utf8 $launcher
 
-Write-Host "--- Chrome launched with the engine's flags, one at a time ---"
-$flagProbe = Join-Path $env:GITHUB_WORKSPACE '.github/scripts/chrome-flag-probe.mjs'
-$flags = [regex]::Matches((Get-Content (Join-Path $Source 'packages/engine/src/services/browserManager.ts') -Raw), '"(--[a-zA-Z0-9-]+(=[^"$]*)?)"') | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique
-foreach ($flag in @('') + $flags) {
-  $baseline = Snapshot
-  $p = Start-Process -FilePath node -ArgumentList @($flagProbe, $env:GITHUB_WORKSPACE, $Chrome, $flag) -WindowStyle Hidden -PassThru
-  $found = @{}
-  while (-not $p.HasExited) {
-    foreach ($entry in (Snapshot).GetEnumerator()) {
-      if (-not $baseline.ContainsKey($entry.Key) -and -not $found.ContainsKey($entry.Key)) { $found[$entry.Key] = $entry.Value }
-    }
-    Start-Sleep -Milliseconds 50
-  }
-  $p.WaitForExit()
-  if ($found.Count -gt 0 -or $flag -eq '') { Write-Host ("flag [{0}] exit={1} new windows={2}" -f $flag, $p.ExitCode, $found.Count) }
-}
-Write-Host "(flags that opened nothing are not listed)"
 
 $runs = @(
   (Watch 'render' 0 @('render', '--fps', '30', '--quality', 'draft', '--workers', '2', '--output', 'renders/probe.mp4')),
   (Watch 'check' 0 @('check')),
   (Watch 'check-warm' 0 @('check')),
-  (Watch 'snapshot' 0 @('snapshot', 'capture', '--frames', '2')),
+  (Watch 'snapshot' 0 @('snapshot', '--frames', '2')),
   (Watch 'preview' 20 @('preview', '--port', '3571'))
 )
 $bad = $runs | Where-Object { $_.Windows -gt 0 }
