@@ -53,4 +53,6 @@ jobs:
           node "$env:GITHUB_WORKSPACE\packages\cli\dist\cli.js" browser ensure
       - name: Run the commands while watching for windows
         shell: pwsh
-        run: .github/scripts/windows-window-probe.ps1 -Cli "$env:GITHUB_WORKSPACE\packages\cli\dist\cli.js" -Project "$env:RUNNER_TEMP\probe\canary"
+        run: |
+          $chrome = (node "$env:GITHUB_WORKSPACE\packages\cli\dist\cli.js" browser path).Trim()
+          .github/scripts/windows-window-probe.ps1 -Cli "$env:GITHUB_WORKSPACE\packages\cli\dist\cli.js" -Project "$env:RUNNER_TEMP\probe\canary" -Chrome $chrome -Source $env:GITHUB_WORKSPACE
