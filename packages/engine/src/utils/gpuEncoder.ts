@@ -7,6 +7,9 @@
  */
 
 import { spawn } from "child_process";
+import { mkdirSync, readFileSync, statSync, writeFileSync } from "fs";
+import { arch, homedir, platform, release } from "os";
+import { dirname, isAbsolute, join } from "path";
 import { getFfmpegBinary } from "./ffmpegBinaries.js";
 import { ManagedChildProcess } from "./managedChildProcess.js";
 import { trackChildProcess } from "./processTracker.js";
@@ -62,6 +65,11 @@ export async function selectUsableGpuEncoder(
 }
 
 export async function detectGpuEncoder(): Promise<GpuEncoder> {
+  return (await probeGpuEncoder()).encoder;
+}
+
+/** The probe, and whether FFmpeg listed its encoders at all: only an answer from a listing is worth keeping. */
+async function probeGpuEncoder(): Promise<{ encoder: GpuEncoder; listed: boolean }> {
   const ffmpeg = spawn(getFfmpegBinary(), ["-encoders"], {
     stdio: ["pipe", "pipe", "pipe"],
     // See runFfmpeg.ts: keeps a console window off the user's desktop on Windows.
@@ -75,18 +83,91 @@ export async function detectGpuEncoder(): Promise<GpuEncoder> {
   const outcome = await new ManagedChildProcess(ffmpeg, {
     deadlineAtMs: Date.now() + 30_000,
   }).wait();
-  if (outcome.reason !== "exit" || outcome.exitCode !== 0) return null;
+  if (outcome.reason !== "exit" || outcome.exitCode !== 0) return { encoder: null, listed: false };
   const candidates = getCompiledGpuEncoders(stdout);
-  return selectUsableGpuEncoder(candidates, canUseGpuEncoder).catch(() => null);
+  const encoder = await selectUsableGpuEncoder(candidates, canUseGpuEncoder).catch(() => null);
+  return { encoder, listed: true };
 }
 
-let cachedGpuEncoder: GpuEncoder | undefined = undefined;
+/** Where this machine's answer is kept between renders: a GPU encoder that fails can take seconds to say so. */
+const KEPT_PROBES = join(homedir(), ".cache", "hyperframes", "gpu-encoder.json");
+/** A kept answer is asked again after this, in case a driver changed under the same FFmpeg and OS. */
+const KEPT_PROBE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
-export async function getCachedGpuEncoder(): Promise<GpuEncoder> {
-  if (cachedGpuEncoder === undefined) {
-    cachedGpuEncoder = await detectGpuEncoder();
+type KeptProbe = { key: string; encoder: GpuEncoder; at: number };
+
+/** What the answer depends on: this FFmpeg build (path, size, modified time) on this OS. Null for a bare name that
+ * only PATH resolves, which has no file to tell builds apart. */
+export function gpuProbeKey(ffmpegPath: string): string | null {
+  if (!isAbsolute(ffmpegPath)) return null;
+  try {
+    const { size, mtimeMs } = statSync(ffmpegPath);
+    return [ffmpegPath, size, Math.round(mtimeMs), platform(), arch(), release()].join("|");
+  } catch {
+    return null;
   }
+}
+
+function readKeptProbes(file: string): Record<string, KeptProbe> {
+  try {
+    const kept: unknown = JSON.parse(readFileSync(file, "utf8"));
+    return kept && typeof kept === "object" ? (kept as Record<string, KeptProbe>) : {};
+  } catch {
+    return {};
+  }
+}
+
+/** The kept answer for `key`, or undefined when there is none, it is stale, or its encoder is not one we know. */
+export function keptGpuEncoder(
+  file: string,
+  ffmpegPath: string,
+  key: string,
+  now = Date.now(),
+): GpuEncoder | undefined {
+  const kept = readKeptProbes(file)[ffmpegPath];
+  if (!kept || kept.key !== key || !(now - kept.at < KEPT_PROBE_MAX_AGE_MS)) return undefined;
+  if (kept.encoder === null || GPU_ENCODER_CANDIDATES.includes(kept.encoder)) return kept.encoder;
+  return undefined;
+}
+
+/** Best effort: a home the render cannot write (a read-only container) only means the next render probes again. */
+export function keepGpuEncoder(
+  file: string,
+  ffmpegPath: string,
+  key: string,
+  encoder: GpuEncoder,
+  now = Date.now(),
+) {
+  try {
+    mkdirSync(dirname(file), { recursive: true });
+    const kept = { ...readKeptProbes(file), [ffmpegPath]: { key, encoder, at: now } };
+    writeFileSync(file, JSON.stringify(kept));
+  } catch {
+    // Not kept: the next render probes again.
+  }
+}
+
+let cachedGpuEncoder: Promise<GpuEncoder> | undefined = undefined;
+
+/** The one probe answer a process uses, from memory, then from the machine's kept answer, then a fresh probe. */
+export function getCachedGpuEncoder(file = KEPT_PROBES): Promise<GpuEncoder> {
+  cachedGpuEncoder ??= probeOrKept(file);
   return cachedGpuEncoder;
+}
+
+async function probeOrKept(file: string): Promise<GpuEncoder> {
+  const ffmpegPath = getFfmpegBinary();
+  const key = gpuProbeKey(ffmpegPath);
+  const kept = key === null ? undefined : keptGpuEncoder(file, ffmpegPath, key);
+  if (kept !== undefined) return kept;
+  const { encoder, listed } = await probeGpuEncoder();
+  if (key !== null && listed) keepGpuEncoder(file, ffmpegPath, key, encoder);
+  return encoder;
+}
+
+/** Tests only: forget the process's answer. */
+export function resetCachedGpuEncoder() {
+  cachedGpuEncoder = undefined;
 }
 
 export function getGpuEncoderName(encoder: GpuEncoder, codec: "h264" | "h265"): string {
