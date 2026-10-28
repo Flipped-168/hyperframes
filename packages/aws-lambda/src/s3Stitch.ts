@@ -1,6 +1,5 @@
 // Builds the final mp4 inside S3: part 1 carries the stitched header, the other parts copy each
 // chunk's mdat payload with UploadPartCopy, so almost no video byte passes through the function.
-// Chunks under S3's 5 MiB part minimum cannot be copied; their parts can go to helper invocations.
 
 import {
   type CompletedPart,
@@ -13,7 +12,6 @@ import { buildStitchedHeader, readMp4Layout } from "@hyperframes/producer/distri
 import { multipartUpload, type MultipartTarget, parseS3Uri } from "./s3Transport.js";
 
 const MIN_PART_BYTES = 5 * 1024 * 1024;
-// One helper's share: ~0.5 s each way on a Lambda's ~80 MB/s link.
 const HELPER_BATCH_BYTES = 32 * 1024 * 1024;
 
 /** Bytes `[start, end)` of an S3 object. */
@@ -27,16 +25,13 @@ export type Part = { copy: RangeSegment } | { upload: Segment[] };
 
 const segmentSize = (s: Segment): number => ("bytes" in s ? s.bytes.length : s.end - s.start);
 
-/** An upload part made only of S3 ranges, so another invocation can build it. */
 export interface RangePart {
   partNumber: number;
   ranges: RangeSegment[];
 }
-/** Uploads `parts` into `target` elsewhere and resolves their ETags in order. */
 export type SendRangeParts = (target: MultipartTarget, parts: RangePart[]) => Promise<string[]>;
 export interface StitchHelper {
   send: SendRangeParts;
-  /** Invocations the helper function can run at once (its reserved concurrency). */
   maxInvocations: number;
 }
 
@@ -119,10 +114,7 @@ const rangesOnly = (part: Part): RangeSegment[] | undefined =>
 const rangeBytes = (ranges: readonly RangeSegment[]) =>
   ranges.reduce((total, r) => total + segmentSize(r), 0);
 
-/**
- * Groups the range-only upload parts into batches of about `HELPER_BATCH_BYTES`, grown so there
- * are never more than `maxBatches`: every closed batch holds at least total / maxBatches bytes.
- */
+// Every closed batch holds at least total / maxBatches bytes, so there are never more than maxBatches.
 export function helperBatches(parts: readonly Part[], maxBatches = Infinity): RangePart[][] {
   const total = parts.reduce((sum, part) => sum + rangeBytes(rangesOnly(part) ?? []), 0);
   const batchBytes = Math.max(HELPER_BATCH_BYTES, Math.ceil(total / maxBatches));
@@ -143,7 +135,6 @@ export function helperBatches(parts: readonly Part[], maxBatches = Infinity): Ra
   return batches;
 }
 
-/** A helper's side: builds each range part and returns the ETags in order. */
 export async function sendRangeParts(
   s3: S3Client,
   target: MultipartTarget,
@@ -204,8 +195,8 @@ export interface StitchResult {
   fileSize: number;
   parts: number;
   downloadedBytes: number;
-  /** Helper invocations that built the range-only parts (0 without a helper). */
   helpers: number;
+  helperFallbacks: number;
 }
 
 /** One faststart mp4 at `destUri` from the stitched mp4 chunks at `chunkUris`, plus `audioUri`'s track when given. */
@@ -235,12 +226,24 @@ export async function stitchMp4InS3(
     })),
   ];
   const parts = planParts(segments, minPartBytes);
-  await uploadParts(s3, parts, destUri, "video/mp4", helper);
+  let helperFallbacks = 0;
+  const helperOrLocal = helper && {
+    maxInvocations: helper.maxInvocations,
+    // A throttled helper (another render may hold the reservation) costs time, not the render.
+    send: (target: MultipartTarget, batch: RangePart[]) =>
+      helper.send(target, batch).catch((error: unknown) => {
+        helperFallbacks++;
+        console.warn(`[s3Stitch] helper failed, building ${batch.length} parts here:`, error);
+        return sendRangeParts(s3, target, batch);
+      }),
+  };
+  await uploadParts(s3, parts, destUri, "video/mp4", helperOrLocal);
   const uploaded = parts.flatMap((part) => ("upload" in part ? part.upload : []));
   return {
     fileSize: segments.reduce((total, s) => total + segmentSize(s), 0),
     parts: parts.length,
     downloadedBytes: uploaded.reduce((total, s) => total + ("uri" in s ? segmentSize(s) : 0), 0),
     helpers: helper ? helperBatches(parts, helper.maxInvocations).length : 0,
+    helperFallbacks,
   };
 }

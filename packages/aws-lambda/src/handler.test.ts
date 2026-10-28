@@ -1699,7 +1699,7 @@ describe("handler — stitch helpers", () => {
           invoked.push(command.input.FunctionName);
           const sent = JSON.parse(command.input.Payload) as StitchPartsEvent;
           if (sent.Parts[0]!.ranges[0]!.uri.endsWith("missing")) {
-            const payload = JSON.stringify({ errorMessage: "NoSuchKey" });
+            const payload = JSON.stringify({ errorMessage: "NoSuchKey", errorType: "NoSuchKey" });
             return { FunctionError: "Unhandled", Payload: new TextEncoder().encode(payload) };
           }
           const out = await handler(sent, { s3: s3 as unknown as S3Client });
@@ -1712,9 +1712,10 @@ describe("handler — stitch helpers", () => {
         '"part-3"',
         '"part-4"',
       ]);
-      await expect(send(target, event("s3://bucket/missing").Parts)).rejects.toThrow(
-        "stitchParts on proj-video failed: NoSuchKey",
-      );
+      await expect(send(target, event("s3://bucket/missing").Parts)).rejects.toMatchObject({
+        name: "NoSuchKey",
+        message: expect.stringContaining("stitchParts on proj-video failed: NoSuchKey"),
+      });
       expect(invoked).toEqual(["proj-video", "proj-video"]);
     } finally {
       if (prev === undefined) delete process.env.HYPERFRAMES_STITCH_FUNCTION;

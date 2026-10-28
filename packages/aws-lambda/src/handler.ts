@@ -941,6 +941,7 @@ async function stitchChunksInS3(
     parts: stitched.parts,
     downloadedBytes: stitched.downloadedBytes,
     helpers: stitched.helpers,
+    helperFallbacks: stitched.helperFallbacks,
   });
   return {
     Action: "assemble",
@@ -1129,11 +1130,14 @@ export function stitchHelper(lambda?: LambdaClient): StitchHelper | undefined {
       new TextDecoder().decode(response.Payload),
     ) as StitchPartsLambdaResult & {
       errorMessage?: string;
+      errorType?: string;
     };
     if (response.FunctionError) {
-      throw new Error(
+      const error = new Error(
         `[handler] stitchParts on ${functionName} failed: ${body.errorMessage ?? response.FunctionError}`,
       );
+      if (body.errorType) error.name = body.errorType;
+      throw error;
     }
     return body.ETags;
   };

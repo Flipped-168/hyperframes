@@ -321,6 +321,19 @@ describe.skipIf(!hasFfmpeg)("stitchMp4InS3 on real chunks", () => {
       expect(batches.length).toBeGreaterThan(0);
       expect(s3.objects.get("s3://bucket/helped.mp4")!.equals(output)).toBe(true);
 
+      // Every helper throttled (another render holds the reservation): built here, same bytes.
+      const throttled = await stitchMp4InS3(s3.asClient(), uris, "s3://bucket/throttled.mp4", {
+        minPartBytes: 16 * 1024,
+        helper: {
+          send: async () => {
+            throw Object.assign(new Error("Rate exceeded"), { name: "TooManyRequestsException" });
+          },
+          maxInvocations: Infinity,
+        },
+      });
+      expect(throttled.helperFallbacks).toBe(batches.length);
+      expect(s3.objects.get("s3://bucket/throttled.mp4")!.equals(output)).toBe(true);
+
       // Today's join: the video-only chunks plus the plan audio.
       writeFileSync(join(planDir, "meta", "encoder.json"), "{}");
       const referencePath = join(dir, "reference.mp4");

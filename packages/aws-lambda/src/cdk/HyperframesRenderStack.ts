@@ -120,7 +120,6 @@ export class HyperframesRenderStack extends Construct {
         HYPERFRAMES_LAMBDA_CHROME_SOURCE: chromeSource,
         HYPERFRAMES_RENDER_BUCKET: this.bucket.bucketName,
         HYPERFRAMES_LAMBDA_RESERVED_CONCURRENCY: String(props.reservedConcurrency ?? -1),
-        // Assemble spreads the parts S3 cannot copy across this function's warm chunk containers.
         HYPERFRAMES_STITCH_FUNCTION: `${projectName}-render`,
       },
     });
@@ -133,18 +132,16 @@ export class HyperframesRenderStack extends Construct {
     this.renderFunction.addToRolePolicy(
       new iam.PolicyStatement({ actions: ["lambda:GetAccountSettings"], resources: ["*"] }),
     );
-    // By name, not `grantInvoke(this.renderFunction)`, which would make the role depend on its own function.
+    const renderFunctionArnWithoutRoleCycle = Stack.of(this).formatArn({
+      service: "lambda",
+      resource: "function",
+      resourceName: `${projectName}-render`,
+      arnFormat: ArnFormat.COLON_RESOURCE_NAME,
+    });
     this.renderFunction.addToRolePolicy(
       new iam.PolicyStatement({
         actions: ["lambda:InvokeFunction"],
-        resources: [
-          Stack.of(this).formatArn({
-            service: "lambda",
-            resource: "function",
-            resourceName: `${projectName}-render`,
-            arnFormat: ArnFormat.COLON_RESOURCE_NAME,
-          }),
-        ],
+        resources: [renderFunctionArnWithoutRoleCycle],
       }),
     );
 
