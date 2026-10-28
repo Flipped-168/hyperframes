@@ -35,6 +35,7 @@ jobs:
           bun run --filter @hyperframes/player build
           bun run --filter @hyperframes/studio build
           bun run --filter @hyperframes/inspector build
+          bun run --filter @hyperframes/engine build
           bun run --filter @hyperframes/cli build
       - name: Scaffold the canary
         shell: pwsh
