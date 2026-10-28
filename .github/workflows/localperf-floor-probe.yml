@@ -33,7 +33,7 @@ jobs:
       - name: bench
         run: |
           cd .localperf-probe
-          node run.mjs base "$RUNNER_TEMP/cli/node_modules/hyperframes/bin/hyperframes.mjs" 3 fixtures/f1-short-portrait fixtures/f2-portrait-42s fixtures/f3-4k-video-60s fixtures/f4-1080p-audio-300s
+          node run.mjs base "$RUNNER_TEMP/cli/node_modules/hyperframes/bin/hyperframes.mjs" 3 fixtures/f1-short-portrait fixtures/f2-portrait-42s
       - if: always()
         uses: actions/upload-artifact@v4
         with:
