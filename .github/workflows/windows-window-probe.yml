@@ -15,7 +15,7 @@ on:
 
 jobs:
   probe:
-    name: A render opens no window on windows-latest
+    name: Agent commands open no window on windows-latest
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -51,8 +51,6 @@ jobs:
         run: |
           Set-Location "$env:RUNNER_TEMP\probe\canary"
           node "$env:GITHUB_WORKSPACE\packages\cli\dist\cli.js" browser ensure
-      - name: Render while watching for windows
+      - name: Run the commands while watching for windows
         shell: pwsh
-        run: |
-          $chrome = (node "$env:GITHUB_WORKSPACE\packages\cli\dist\cli.js" browser path).Trim()
-          .github/scripts/windows-window-probe.ps1 -Cli "$env:GITHUB_WORKSPACE\packages\cli\dist\cli.js" -Project "$env:RUNNER_TEMP\probe\canary" -Chrome $chrome
+        run: .github/scripts/windows-window-probe.ps1 -Cli "$env:GITHUB_WORKSPACE\packages\cli\dist\cli.js" -Project "$env:RUNNER_TEMP\probe\canary"
