@@ -3657,7 +3657,12 @@ describe("calibrationCaptureConfig", () => {
 });
 
 describe("isAppleGpuDiskCapture", () => {
-  const disk = { platform: "darwin", browserGpuMode: "hardware", layered: false, parallelStream: false } as const;
+  const disk = {
+    platform: "darwin",
+    browserGpuMode: "hardware",
+    layered: false,
+    parallelStream: false,
+  } as const;
 
   it("holds only for hardware-GPU Mac renders that write frames to disk", () => {
     expect(isAppleGpuDiskCapture(disk)).toBe(true);
