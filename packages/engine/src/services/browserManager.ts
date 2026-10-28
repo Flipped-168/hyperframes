@@ -56,13 +56,7 @@ export function setHostHandlesSigint(owned: boolean): void {
   hostHandlesSigint = owned;
 }
 
-// Windows: a detached Chrome has no console, so Windows Terminal opens a window for each Chrome process.
-// @puppeteer/browsers 3.2.1 defaults detached to true there; POSIX keeps it for the process-group kill.
-export const ownedLaunchOptions = () => ({
-  handleSIGINT: !hostHandlesSigint,
-  pipe: true,
-  ...(process.platform === "win32" && { detached: false }),
-});
+export const ownedLaunchOptions = () => ({ handleSIGINT: !hostHandlesSigint, pipe: true });
 
 interface WebGlProbeInfo {
   hasWebGL: boolean;
