@@ -4068,10 +4068,22 @@ async function executeRenderPipeline(input: {
 
     // Low-memory safe-mode's single-worker pin lives inside
     // resolveRenderWorkerCount so its "why workers=N" logging stays coherent.
+    const appleGpuDiskCapture =
+      process.platform === "darwin" &&
+      resolvedBrowserGpuMode === "hardware" &&
+      !isCaptureParallelStreamRouterEnabled(
+        process.env,
+        resolveParallelCaptureMode({
+          platform: process.platform,
+          headlessShellPath: resolveHeadlessShellPath(cfg),
+          forceScreenshot: captureForceScreenshot,
+          deviceScaleFactor: captureOptions.deviceScaleFactor,
+        }),
+      );
     workerCount = resolveRenderWorkerCount(
       totalFrames,
       job.config.workers,
-      cfg,
+      { ...cfg, appleGpuDiskCapture },
       compiled,
       log,
       captureCalibration?.estimate,
