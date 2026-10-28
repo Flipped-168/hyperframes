@@ -91,7 +91,7 @@ $env:NODE_OPTIONS = "--require $env:GITHUB_WORKSPACE/.github/scripts/spawn-audit
 $render = Watch @($launcher, $Cli, $Project)
 Remove-Item Env:NODE_OPTIONS
 Write-Host "--- child processes started without windowsHide ---"
-if (Test-Path $audit) { Get-Content $audit | Sort-Object -Unique | ForEach-Object { Write-Host "unhidden $_" } }
+if (Test-Path $audit) { Get-Content $audit | Sort-Object -Unique | ForEach-Object { Write-Host "audit $_" } }
 $script:procs.Values | Sort-Object | ForEach-Object { Write-Host "proc $_" }
 Write-Host "Render exit code: $($render.Exit)"
 Write-Host "New visible windows during the render: $($render.Windows.Count)"
