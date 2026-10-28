@@ -33,7 +33,7 @@ function Snapshot {
   $seen = @{}
   foreach ($w in [Windows]::Visible()) {
     $proc = Get-Process -Id ([int]$w[1]) -ErrorAction SilentlyContinue
-    $seen[$w[0]] = [pscustomobject]@{ Handle = $w[0]; Process = $proc.ProcessName; Class = $w[2]; Title = $w[3] }
+    $seen[$w[0]] = [pscustomobject]@{ Handle = $w[0]; Pid = $w[1]; Process = $proc.ProcessName; Class = $w[2]; Title = $w[3]; Detail = '' }
   }
   $seen
 }
@@ -55,13 +55,19 @@ $render = Start-Process -FilePath node -ArgumentList @($launcher, $Cli, $Project
 $new = @{}
 while (-not $render.HasExited) {
   foreach ($entry in (Snapshot).GetEnumerator()) {
-    if (-not $baseline.ContainsKey($entry.Key) -and -not $new.ContainsKey($entry.Key)) { $new[$entry.Key] = $entry.Value }
+    if (-not $baseline.ContainsKey($entry.Key) -and -not $new.ContainsKey($entry.Key)) {
+      $row = $entry.Value
+      $cim = Get-CimInstance Win32_Process -Filter "ProcessId=$($row.Pid)" -ErrorAction SilentlyContinue
+      $parent = if ($cim) { Get-CimInstance Win32_Process -Filter "ProcessId=$($cim.ParentProcessId)" -ErrorAction SilentlyContinue }
+      $row.Detail = "cmd=[$($cim.CommandLine)] parent=[$($parent.Name) $($parent.CommandLine)]"
+      $new[$entry.Key] = $row
+    }
   }
   Start-Sleep -Milliseconds 50
 }
 $render.WaitForExit()
 Write-Host "Render exit code: $($render.ExitCode)"
 Write-Host "New visible windows during the render: $($new.Count)"
-$new.Values | Format-Table -AutoSize | Out-String | Write-Host
+$new.Values | ForEach-Object { Write-Host "$($_.Process) pid=$($_.Pid) class=$($_.Class) title=[$($_.Title)] $($_.Detail)" }
 if ($render.ExitCode -ne 0) { throw "render failed" }
 if ($new.Count -gt 0) { throw "the render opened $($new.Count) visible window(s)" }
