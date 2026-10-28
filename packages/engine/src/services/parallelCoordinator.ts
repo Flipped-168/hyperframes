@@ -153,8 +153,7 @@ const HEAP_RESERVED_MB = 1024;
 // default heap ⇒ >~500MB/worker + base. Caps auto sizing; an explicit
 // `--workers N` is still the operator's call.
 const HEAP_PER_WORKER_MB = 640;
-// Apple-GPU screenshot workers write frames to disk and Metal draws them: measured parent heap
-// is ~15-25 MB per worker, and a 14-core Mac kept getting faster up to 8 workers.
+// Apple-GPU disk capture measured ~15-25 MB parent heap per worker; 14 cores kept gaining to 8.
 const APPLE_DISK_HEAP_PER_WORKER_MB = 128;
 const APPLE_DISK_CORES_PER_WORKER = 1.75;
 const APPLE_DISK_MAX_WORKERS = 8;
@@ -378,7 +377,6 @@ export function computeWorkerSizing(
       : defaultSafeMaxWorkers();
   })();
   const configuredCoresPerWorker = config?.coresPerWorker ?? DEFAULT_CONFIG.coresPerWorker;
-  // An explicit PRODUCER_CORES_PER_WORKER still wins over the Apple-GPU default.
   const effectiveCoresPerWorker =
     appleDisk && configuredCoresPerWorker === DEFAULT_CONFIG.coresPerWorker
       ? APPLE_DISK_CORES_PER_WORKER
