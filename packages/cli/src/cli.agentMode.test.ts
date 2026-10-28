@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import type { CommandDef } from "citty";
 import { afterAll, describe, expect, it } from "vitest";
 import { isDefinedCommand } from "./utils/defineCommand.js";
+import { checkStudioWorkspaceBuild } from "./utils/workspaceBuildCheck.js";
 
 // Runs every registered command the way a coding agent does: no terminal, stdin closed, CI set,
 // an agent marker in the environment, and a home folder of its own. A new command is covered as
@@ -101,6 +102,10 @@ function expectQuiet(run: Run): void {
 }
 
 const commands = await registeredCommands();
+// From source, `preview` refuses to load until the studio packages are built; the test job does
+// not build them, so preview is only spawned where they are.
+const studioBuilt = checkStudioWorkspaceBuild(join(srcDir, "..", "..", "..")).length === 0;
+const spawnable = commands.filter((c) => studioBuilt || c.path[0] !== "preview");
 
 describe("agent-mode contract", () => {
   it("finds the registered commands", () => {
@@ -115,7 +120,7 @@ describe("agent-mode contract", () => {
   );
 
   describe.concurrent("each command", () => {
-    it.each(commands.map((c) => [c.path.join(" "), c.path] as const))(
+    it.each(spawnable.map((c) => [c.path.join(" "), c.path] as const))(
       "%s --help prints plain help and exits 0",
       async (_label, path) => {
         const run = await runAsAgent([...path, "--help"]);
@@ -125,7 +130,7 @@ describe("agent-mode contract", () => {
       },
     );
 
-    it.each(commands.map((c) => [c.path.join(" "), c.path] as const))(
+    it.each(spawnable.map((c) => [c.path.join(" "), c.path] as const))(
       "%s rejects an unknown flag with exit 2",
       async (_label, path) => {
         const run = await runAsAgent([...path, "--not-a-real-flag"]);
