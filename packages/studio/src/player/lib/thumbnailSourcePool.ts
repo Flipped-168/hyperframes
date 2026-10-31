@@ -12,6 +12,7 @@ interface OpenedSource {
   mediabunny: Mediabunny;
   track: InputVideoTrack;
   info: SourceInfo;
+  etag: string | undefined;
 }
 
 export interface ThumbnailSource extends OpenedSource {
@@ -19,6 +20,7 @@ export interface ThumbnailSource extends OpenedSource {
   release(failed: boolean): void;
   /** The job waited for the reader to open: the open finishing was progress the job saw. */
   waitedForOpen: boolean;
+  progress: { framesFromAnyJob: number };
 }
 
 interface PooledSource {
@@ -28,6 +30,7 @@ interface PooledSource {
   ready: boolean;
   opened: Promise<OpenedSource>;
   users: number;
+  progress: { framesFromAnyJob: number };
   idleTimer: ReturnType<typeof setTimeout> | null;
   disposed: boolean;
 }
@@ -86,7 +89,8 @@ async function open(source: string, pooled: () => PooledSource): Promise<OpenedS
   }
   const metadataDuration = await track.getDurationFromMetadata({ skipLiveWait: true });
   live();
-  return { mediabunny, track, info: { aspect: displayWidth / displayHeight, metadataDuration } };
+  const info = { aspect: displayWidth / displayHeight, metadataDuration };
+  return { mediabunny, track, info, etag: options.etagOf() };
 }
 
 function pooledSource(source: string, version: string | undefined): PooledSource {
@@ -100,6 +104,7 @@ function pooledSource(source: string, version: string | undefined): PooledSource
     ready: false,
     opened: open(source, () => entry),
     users: 0,
+    progress: { framesFromAnyJob: 0 },
     idleTimer: null,
     disposed: false,
   };
@@ -150,7 +155,8 @@ export async function acquireThumbnailSource(
     }
   };
   try {
-    return { ...(await untilAborted(entry.opened, signal)), release, waitedForOpen };
+    const { progress } = entry;
+    return { ...(await untilAborted(entry.opened, signal)), release, waitedForOpen, progress };
   } catch (error) {
     // Timed out still waiting: the open made no progress in the job's whole run.
     release(!isAbortError(error) || timedOut(signal));

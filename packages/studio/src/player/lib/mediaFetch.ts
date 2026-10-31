@@ -71,7 +71,9 @@ const typedFailure = (reader: MediaReader, error: unknown, start: number) =>
  * A stalled body ignores every signal, so a silent one is aborted. The wait for the answer is not
  * timed: it includes Chrome's queue for a connection, which streaming previews can hold for long.
  */
-function watchedRequest(reader: MediaReader, parents: readonly AbortSignal[]) {
+type CleanEnd = { ended: (start: number) => void; atTarget: AbortSignal | null | undefined };
+
+function watchedRequest(reader: MediaReader, parents: readonly AbortSignal[], end?: CleanEnd) {
   const controller = new AbortController();
   let stalled = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -102,7 +104,7 @@ function watchedRequest(reader: MediaReader, parents: readonly AbortSignal[]) {
     stalled
       ? new MediaFetchError(reader, null, "stalled", start)
       : typedFailure(reader, error, start);
-  return { signal: controller.signal, wait, done, failure };
+  return { signal: controller.signal, wait, done, failure, end };
 }
 
 type WatchedRequest = ReturnType<typeof watchedRequest>;
@@ -114,12 +116,15 @@ function typedBody(
   request: WatchedRequest,
 ): ReadableStream<Uint8Array> {
   const source = body.getReader();
+  const stopped = () => request.end?.atTarget?.aborted && request.end.ended(start);
+  request.signal.addEventListener("abort", stopped, { once: true });
   return new ReadableStream<Uint8Array>({
     async pull(controller) {
       try {
         const { done, value } = await request.wait(source.read());
         if (!done) return controller.enqueue(value);
         request.done();
+        request.end?.ended(start);
         controller.close();
       } catch (error) {
         request.done();
@@ -172,15 +177,20 @@ export function mediaUrlSourceOptions(reader: MediaReader) {
   const failuresByStart = new Map<number | null, number>();
   const inFlightReads = new AbortController();
   let ranges: "unknown" | "readable" | "hidden" = reader === "thumbnail" ? "unknown" : "hidden";
+  let etag: string | undefined;
+  const noteEtag = (response: Response) =>
+    void (etag ??= response.headers.get("ETag") ?? undefined);
   const fetchFn = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const sent = ranges === "readable" ? boundedRange(init) : init;
     const asked = Number(rangeStart(sent, true) ?? 0);
     const request = watchedRequest(
       reader,
       init?.signal ? [inFlightReads.signal, init.signal] : [inFlightReads.signal],
+      { ended: (start) => failuresByStart.delete(start), atTarget: init?.signal },
     );
     const response = await typedFetch(reader, input, sent ?? {}, asked, request);
     if (ranges !== "hidden") ranges = rangesReadable(sent, response) ? "readable" : "hidden";
+    noteEtag(response);
     return typedResponse(response, asked, request);
   };
   const getRetryDelay = (_previousAttempts: number, error: unknown): number | null => {
@@ -195,8 +205,9 @@ export function mediaUrlSourceOptions(reader: MediaReader) {
   };
   const cancelReads = () =>
     inFlightReads.abort(new DOMException("Media reads cancelled", "AbortError"));
-  if (reader === "probe") return { fetchFn, getRetryDelay, cancelReads };
-  return { fetchFn, getRetryDelay, cancelReads, maxCacheSize: POOLED_READER_CACHE_BYTES };
+  const etagOf = () => etag;
+  if (reader === "probe") return { fetchFn, getRetryDelay, cancelReads, etagOf };
+  return { fetchFn, getRetryDelay, cancelReads, etagOf, maxCacheSize: POOLED_READER_CACHE_BYTES };
 }
 
 export function reportMediaFetchFailure(error: unknown): void {

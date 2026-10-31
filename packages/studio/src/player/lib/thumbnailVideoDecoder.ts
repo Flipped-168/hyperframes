@@ -17,6 +17,15 @@ import {
   takeSharedFrame,
   type HeldFrame,
 } from "./thumbnailFrameCache";
+import {
+  readStoredFrame,
+  readStoredInfo,
+  rememberVersion,
+  storedVersion,
+  storeFrame,
+  storeInfo,
+  type StoredSource,
+} from "./thumbnailDiskCache";
 
 export interface VideoThumbnailDecodeRequest {
   source: string;
@@ -52,6 +61,17 @@ interface FrameWindow {
 }
 
 const sourceInfos = new Map<string, { version: string | undefined; info: SourceInfo }>();
+const storedVersions = new Map<string, Promise<StoredSource | undefined>>();
+const storedInfos = new Set<string>();
+
+const openOf = (request: VideoThumbnailDecodeRequest) =>
+  `${request.source}\u0000${request.contentVersion ?? ""}`;
+
+function storedVersionOf(request: VideoThumbnailDecodeRequest): Promise<StoredSource | undefined> {
+  let pending = storedVersions.get(openOf(request));
+  if (!pending) storedVersions.set(openOf(request), (pending = storedVersion(request.source)));
+  return pending;
+}
 
 const accepts = (window: FrameWindow, time: number, decodedAt: number) =>
   decodedAt >= window.sourceStart && time - decodedAt <= (time >= window.end ? 0 : window.lead);
@@ -79,7 +99,7 @@ interface DecodedResources {
   held: HeldFrame[];
   canvases: Set<HTMLCanvasElement | OffscreenCanvas>;
   releasedFrameBytes: number;
-  decodedByJob: number;
+  store?: (slot: number, decodedAt: number, blob: Blob) => void;
 }
 
 interface ThumbnailCanvasSink {
@@ -175,6 +195,7 @@ async function decodeFrames(
   slots: { slot: number; key: string; decodedAt?: number }[],
   signal: AbortSignal,
   resources: DecodedResources,
+  progress: ThumbnailSource["progress"],
 ): Promise<void> {
   let next = 0;
   for await (const wrapped of sink.canvasesAtTimestamps(times)) {
@@ -185,7 +206,8 @@ async function decodeFrames(
     const blob = await canvasToBlob(wrapped.canvas);
     throwIfAborted(signal);
     const frame = shareFrame(target.key, target.decodedAt, URL.createObjectURL(blob), blob.size);
-    resources.decodedByJob += 1;
+    progress.framesFromAnyJob += 1;
+    resources.store?.(target.slot, target.decodedAt, blob);
     resources.urls[target.slot] = frame.url;
     resources.held.push({ key: target.key, frame });
   }
@@ -218,6 +240,64 @@ function loadedResult(
   };
 }
 
+const storedFrameName =
+  (fit: string, info: SourceInfo, budgets: Readonly<TimelineViewportBudgets>) => (time: number) => {
+    const { width, height } = targetDimensions(info.aspect, budgets);
+    return `${fit} ${width}x${height} ${time}`;
+  };
+
+async function takeStoredFrames(
+  { timestamps, window }: ReturnType<typeof stripTimes>,
+  slots: number[],
+  keyOf: (time: number) => string,
+  nameOf: (time: number) => string,
+  resources: DecodedResources,
+  stored: StoredSource,
+): Promise<number[]> {
+  const found = await Promise.all(
+    slots.map((slot) => readStoredFrame(stored, nameOf(timestamps[slot]!))),
+  );
+  return slots.filter((slot, i) => {
+    const time = timestamps[slot]!;
+    const hit = found[i];
+    if (!hit || !accepts(window, time, hit.decodedAt)) return true;
+    const key = keyOf(time);
+    const frame = shareFrame(key, hit.decodedAt, URL.createObjectURL(hit.blob), hit.blob.size);
+    resources.urls[slot] = frame.url;
+    resources.held.push({ key, frame });
+    return false;
+  });
+}
+
+function versionRead(
+  request: VideoThumbnailDecodeRequest,
+  source: ThumbnailSource,
+): StoredSource | undefined {
+  if (!source.etag) return undefined;
+  const version = { source: request.source, etag: source.etag };
+  storedVersions.set(openOf(request), Promise.resolve(version));
+  return version;
+}
+
+function storeForNextSession(
+  request: VideoThumbnailDecodeRequest,
+  info: SourceInfo,
+  budgets: Readonly<TimelineViewportBudgets>,
+  resources: DecodedResources,
+  version: StoredSource | undefined,
+): void {
+  if (!version) return;
+  const id = `${version.source}\u0000${version.etag}`;
+  if (!storedInfos.has(id)) {
+    storedInfos.add(id);
+    void rememberVersion(version).then(() => storeInfo(version, info));
+  }
+  const nameOf = storedFrameName(request.fit ?? "cover", info, budgets);
+  const { timestamps } = stripTimes(request, info, budgets);
+  resources.store = (slot, decodedAt, blob) =>
+    void storeFrame(version, nameOf(timestamps[slot]!), decodedAt, blob);
+}
+
 /** Sparse Mediabunny extraction with one pooled canvas and one cleanup owner. */
 export async function decodeVideoThumbnail(
   request: VideoThumbnailDecodeRequest,
@@ -232,19 +312,30 @@ export async function decodeVideoThumbnail(
     held: [],
     canvases: new Set(),
     releasedFrameBytes: budgets.sharedFrameCacheBytes,
-    decodedByJob: 0,
   };
   const entry = sourceInfos.get(request.source);
-  const known = entry?.version === request.contentVersion ? entry?.info : undefined;
   try {
+    const stored = await storedVersionOf(request);
+    const known =
+      entry && entry.version === request.contentVersion
+        ? entry.info
+        : stored && (await readStoredInfo(stored));
     if (known) {
-      if (takeDecodedFrames(stripTimes(request, known, budgets), keyOf, resources).length === 0) {
+      sourceInfos.set(request.source, { version: request.contentVersion, info: known });
+      const strip = stripTimes(request, known, budgets);
+      const missing = takeDecodedFrames(strip, keyOf, resources);
+      const nameOf = storedFrameName(fit, known, budgets);
+      const left =
+        stored && missing.length > 0
+          ? await takeStoredFrames(strip, missing, keyOf, nameOf, resources, stored)
+          : missing;
+      if (left.length === 0) {
         throwIfAborted(signal);
         return loadedResult(resources, known.aspect, budgets);
       }
       releaseDecodedResources(resources);
     }
-    return await decodeMissingFrames(request, signal, budgets, keyOf, resources);
+    return await decodeMissingFrames(request, signal, budgets, keyOf, resources, stored);
   } catch (error) {
     releaseDecodedResources(resources);
     reportMediaFetchFailure(error);
@@ -258,6 +349,7 @@ async function decodeMissingFrames(
   budgets: Readonly<TimelineViewportBudgets>,
   keyOf: (time: number) => string,
   resources: DecodedResources,
+  stored: StoredSource | undefined,
 ): Promise<ThumbnailLoadedResult> {
   let source: ThumbnailSource;
   try {
@@ -271,8 +363,9 @@ async function decodeMissingFrames(
     if (timedOut(signal)) reportMediaFetchFailure(timeoutWithoutProgress());
     throw error;
   }
+  const framesBefore = source.progress.framesFromAnyJob;
   const releaseOnAbort = () => {
-    const madeProgress = source.waitedForOpen || resources.decodedByJob > 0;
+    const madeProgress = source.waitedForOpen || source.progress.framesFromAnyJob > framesBefore;
     const failed = timedOut(signal) && !madeProgress;
     if (failed) reportMediaFetchFailure(timeoutWithoutProgress());
     source.release(failed);
@@ -284,6 +377,7 @@ async function decodeMissingFrames(
     sourceInfos.set(request.source, { version: request.contentVersion, info });
     const strip = stripTimes(request, info, budgets);
     const { timestamps, window } = strip;
+    storeForNextSession(request, info, budgets, resources, stored ?? versionRead(request, source));
     const slots: { slot: number; key: string; decodedAt?: number }[] = takeDecodedFrames(
       strip,
       keyOf,
@@ -307,7 +401,8 @@ async function decodeMissingFrames(
         fit: request.fit ?? "cover",
         poolSize: 1,
       });
-      await decodeFrames(sink, decodeTimesAtNearbyKeyframes(), slots, signal, resources);
+      const times = decodeTimesAtNearbyKeyframes();
+      await decodeFrames(sink, times, slots, signal, resources, source.progress);
     }
     const result = loadedResult(resources, info.aspect, budgets, timestamps.length);
     source.release(false);

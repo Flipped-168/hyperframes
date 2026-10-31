@@ -16,6 +16,7 @@ import {
   matchComponentFindings,
   captureOverviewShot,
   keepBrokenImageAborts,
+  keepFailedNetworkChanges,
   preResolveHostileMediaProxies,
   dropFailedProxyEchoes,
   runBrowserCheck,
@@ -402,6 +403,10 @@ it("runs the dense overlap grid in page tasks of at most 8 samples, keeping each
   expect(lines).toContain("[hyperframes] check: samples 1/1");
   const batches = Math.ceil(denseAudits.length / 8);
   expect(lines).toContain(`[hyperframes] check: overlap ${batches}/${batches}`);
+  for (const step of [0, 1, 2]) expect(lines).toContain(`[hyperframes] check: analyze ${step}/3`);
+  expect(lines.indexOf("[hyperframes] check: analyze 0/3")).toBeGreaterThan(
+    lines.indexOf(`[hyperframes] check: overlap ${batches}/${batches}`),
+  );
   expect(denseAudits.length).toBeGreaterThan(10);
   const tasks = new Map<number, number>();
   for (const calls of denseAudits) tasks.set(calls, (tasks.get(calls) ?? 0) + 1);
@@ -1085,6 +1090,34 @@ describe("collectSeekClock", () => {
   });
 });
 
+describe("keepFailedNetworkChanges", () => {
+  const draft = (url: string, networkChanged: boolean) => ({
+    code: "request_failed",
+    severity: "error" as const,
+    message: `Failed to load ${url}`,
+    time: 31,
+    url,
+    networkChanged,
+  });
+
+  it("drops a request the network change cut when the file loads again, and keeps every other failure", () => {
+    const cut = draft("http://h/assets/clip.mp4", true);
+    const gone = draft("http://h/assets/gone.mp4", true);
+    const refused = draft("http://h/assets/refused.mp4", false);
+    const kept = keepFailedNetworkChanges(
+      [cut, gone, refused],
+      new Set(["http://h/assets/gone.mp4"]),
+    );
+    expect(kept).toEqual([gone, refused]);
+  });
+
+  it("drops every cut request when nothing is re-asked, as a check out of time reports", () => {
+    const cut = draft("http://h/assets/clip.mp4", true);
+    const refused = draft("http://h/assets/refused.mp4", false);
+    expect(keepFailedNetworkChanges([cut, refused], new Set())).toEqual([refused]);
+  });
+});
+
 describe("keepBrokenImageAborts", () => {
   const draft = (url: string, abortedImage: boolean) => ({
     code: "request_failed",
@@ -1498,7 +1531,7 @@ describe("preResolveHostileMediaProxies", () => {
       await pending;
 
       expect(errorSpy.mock.calls.map(([line]) => line)).toContain(
-        "[hyperframes] browser-playable copy of clip.mov: 25% (10s so far)",
+        "[hyperframes] making browser-playable copies: 0 of 1 done. clip.mov: 25% (10s so far)",
       );
     } finally {
       mocks.proxyProgress.feed = undefined;
@@ -1536,8 +1569,10 @@ describe("preResolveHostileMediaProxies", () => {
       await pending;
 
       const lines = errorSpy.mock.calls.map(([line]) => String(line));
-      expect(lines).toContain("[hyperframes] browser-playable copy of b.mov: 25% (10s so far)");
-      expect(lines.some((line) => line.includes("copy of a.mov"))).toBe(false);
+      expect(lines).toContain(
+        "[hyperframes] making browser-playable copies: 1 of 2 done. b.mov: 25% (10s so far)",
+      );
+      expect(lines.some((line) => line.includes(" a.mov: "))).toBe(false);
     } finally {
       mocks.proxyProgress.feed = undefined;
       vi.useRealTimers();
@@ -1625,13 +1660,13 @@ describe("preResolveHostileMediaProxies", () => {
     expect(mocks.resolveProxy).not.toHaveBeenCalled();
   });
 
-  it("pre-resolves an alpha VP9 asset through the Chromium-compatible VP8 proxy", async () => {
+  it("pre-resolves an alpha asset through the Chromium-compatible VP8 proxy", async () => {
     const projectDir = mkProjectDir();
     mocks.scanProjectMediaCodecMap.mockResolvedValue({
-      "/alpha.webm": {
-        codecName: "vp9",
+      "/alpha.mov": {
+        codecName: "prores",
         browserHostile: true,
-        representativeMime: 'video/webm; codecs="vp09.00.10.08"',
+        representativeMime: null,
         hasAlpha: true,
       },
     });
@@ -1641,9 +1676,31 @@ describe("preResolveHostileMediaProxies", () => {
     expect(mocks.resolveProxy).toHaveBeenCalledTimes(1);
     expect(mocks.resolveProxy).toHaveBeenCalledWith(
       projectDir,
-      join(projectDir, "alpha.webm"),
+      join(projectDir, "alpha.mov"),
       "vp8",
     );
+  });
+
+  it("does not copy VP9 or AV1 videos, which Chrome plays (alpha included)", async () => {
+    const projectDir = mkProjectDir();
+    mocks.scanProjectMediaCodecMap.mockResolvedValue({
+      "/cutout.webm": {
+        codecName: "vp9",
+        browserHostile: true,
+        representativeMime: 'video/webm; codecs="vp09.00.10.08"',
+        hasAlpha: true,
+      },
+      "/clip.mp4": {
+        codecName: "av1",
+        browserHostile: true,
+        representativeMime: 'video/mp4; codecs="av01.0.08M.08"',
+        hasAlpha: false,
+      },
+    });
+
+    await preResolveHostileMediaProxies(projectDir, "<html></html>");
+
+    expect(mocks.resolveProxy).not.toHaveBeenCalled();
   });
 
   it("is a no-op when the codec map has no hostile entries", async () => {

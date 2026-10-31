@@ -58,12 +58,14 @@ import {
   calibrationCaptureConfig,
   shouldPreferParallelDrawElement,
   shouldPreferSingleWorkerDrawElement,
+  initialDeClampReason,
   resolveDeSingleMinFrames,
   isCaptureParallelStreamRouterEnabled,
   shouldSegmentCapture,
   SEGMENTED_MIN_SECONDS_AFTER_SOAK,
   resolveParallelCaptureMode,
   shouldStreamParallelCapture,
+  isAppleGpuDiskCapture,
   shouldUseStreamingEncode,
   resolveObservedCaptureMode,
   createCaptureObservabilityUpdater,
@@ -1972,6 +1974,36 @@ describe("resolveDeviceScaleFactor", () => {
   });
 });
 
+describe("initialDeClampReason", () => {
+  const config = {
+    platform: "win32" as const,
+    browserGpuMode: "hardware" as const,
+    workerEncode: true,
+  };
+
+  it("labels a content gate from the compile stage as compile_gate, not disabled", () => {
+    expect(initialDeClampReason({ useDrawElement: false, deCompileGate: "3d", config })).toBe(
+      "compile_gate",
+    );
+  });
+
+  it("keeps config refusals and leaves an engaged render unlabeled", () => {
+    expect(initialDeClampReason({ useDrawElement: false, deCompileGate: undefined, config })).toBe(
+      "disabled",
+    );
+    expect(
+      initialDeClampReason({
+        useDrawElement: false,
+        deCompileGate: undefined,
+        config: { ...config, browserGpuMode: "software" },
+      }),
+    ).toBe("software_gpu");
+    expect(
+      initialDeClampReason({ useDrawElement: true, deCompileGate: undefined, config }),
+    ).toBeUndefined();
+  });
+});
+
 describe("shouldPreferSingleWorkerDrawElement (DE priority inversion)", () => {
   const eligible = {
     workerCount: 5,
@@ -3662,6 +3694,23 @@ describe("calibrationCaptureConfig", () => {
     const cfg = drawElementCfg();
     expect(calibrationCaptureConfig(cfg, { PRODUCER_EXPERIMENTAL_FAST_CAPTURE: "true" })).toBe(cfg);
     expect(calibrationCaptureConfig(cfg, { HF_DE_PARALLEL_STREAM: "true" })).toBe(cfg);
+  });
+});
+
+describe("isAppleGpuDiskCapture", () => {
+  const disk = {
+    platform: "darwin",
+    browserGpuMode: "hardware",
+    layered: false,
+    parallelStream: false,
+  } as const;
+
+  it("holds only for hardware-GPU Mac renders that write frames to disk", () => {
+    expect(isAppleGpuDiskCapture(disk)).toBe(true);
+    expect(isAppleGpuDiskCapture({ ...disk, layered: true })).toBe(false);
+    expect(isAppleGpuDiskCapture({ ...disk, parallelStream: true })).toBe(false);
+    expect(isAppleGpuDiskCapture({ ...disk, browserGpuMode: "software" })).toBe(false);
+    expect(isAppleGpuDiskCapture({ ...disk, platform: "win32" })).toBe(false);
   });
 });
 

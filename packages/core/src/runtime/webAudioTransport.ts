@@ -14,6 +14,7 @@ import {
   resolveMasterBusElement,
 } from "../audioGroups.js";
 import { swallow } from "./diagnostics";
+import { reportMediaLoadFailure } from "./mediaLoadFailure";
 import { createLevelTap, type LevelTap, type StereoLevel } from "./levelTap.js";
 import { clampAudioGain } from "../audioGain.js";
 import { getDebugSurface } from "./globals.js";
@@ -227,6 +228,7 @@ const FOLLOWED_EVENTS = ["playing", "seeked", "ratechange"] as const;
 
 // A pause to scrub or a reschedule mid-play keeps the output awake; a real idle lets it sleep.
 const IDLE_SUSPEND_MS = 10000;
+const SHORT_DECODE_SECONDS = 0.25;
 
 export class WebAudioTransport {
   private _ctx: AudioContext | null = null;
@@ -355,12 +357,12 @@ export class WebAudioTransport {
     if (!src) return Promise.resolve(null);
     const pending = this._decoding.get(src);
     if (pending) return pending;
-    const decoding = this.fetchAndDecode(src).finally(() => this._decoding.delete(src));
+    const decoding = this.fetchAndDecode(src, el).finally(() => this._decoding.delete(src));
     this._decoding.set(src, decoding);
     return decoding;
   }
 
-  private async fetchAndDecode(src: string): Promise<AudioBuffer | null> {
+  private async fetchAndDecode(src: string, el: HTMLMediaElement): Promise<AudioBuffer | null> {
     if (this._bufferCache.has(src)) return this._bufferCache.get(src)!;
     if (this._failedSrcs.has(src)) return null;
     if (!this._ctx) return null;
@@ -378,11 +380,13 @@ export class WebAudioTransport {
       const response = await fetch(src, { cache: "no-store" });
       if (!response.ok) {
         swallow("webAudioTransport.fetch", new Error(`${response.status} ${src}`));
+        reportMediaLoadFailure(el, "fetch", response.status);
         return null;
       }
       arrayBuffer = await response.arrayBuffer();
     } catch (err) {
       swallow("webAudioTransport.fetch", err);
+      reportMediaLoadFailure(el, "fetch", null);
       return null;
     }
 
@@ -391,11 +395,20 @@ export class WebAudioTransport {
     // the same bad payload on every generation.
     try {
       const audioBuffer = await this._ctx.decodeAudioData(arrayBuffer);
+      // A file whose container timescale disagrees with its stream decodes short; its element plays it whole.
+      if (
+        Number.isFinite(el.duration) &&
+        el.duration - audioBuffer.duration > SHORT_DECODE_SECONDS
+      ) {
+        this._failedSrcs.add(src);
+        return null;
+      }
       this._bufferCache.set(src, audioBuffer);
       return audioBuffer;
     } catch (err) {
       this._failedSrcs.add(src);
       swallow("webAudioTransport.decode", err);
+      reportMediaLoadFailure(el, "decode", null, arrayBuffer.byteLength);
       return null;
     }
   }

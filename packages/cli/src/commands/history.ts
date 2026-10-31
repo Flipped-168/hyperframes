@@ -5,6 +5,7 @@ import {
   HistoryBusyError,
   HistoryIdError,
   HistoryRefusedError,
+  isUncopiedMedia,
   type HistoryEntry,
   type HistoryListItem,
   type HistoryResult,
@@ -29,6 +30,7 @@ import {
 } from "../utils/historyOwner.js";
 import { AmbiguousPreviewServerError } from "../utils/studioSelectionClient.js";
 import { withMeta } from "../utils/updateCheck.js";
+import { jsonFailure } from "../utils/jsonError.js";
 
 export const examples: Example[] = [
   [
@@ -195,6 +197,10 @@ function print(json: boolean, data: object, text: string): void {
 async function textDiff(reader: Reader, entry: HistoryEntry): Promise<string> {
   const out: string[] = [];
   for (const file of entry.files) {
+    if (isUncopiedMedia(file.path)) {
+      out.push(`Media ${file.path} changed, not kept in history`);
+      continue;
+    }
     const sides = await Promise.all(
       [file.before, file.after].map((hash) => (hash ? reader.blob(hash) : Buffer.alloc(0))),
     );
@@ -326,7 +332,7 @@ function guarded<A>(run: (args: A) => Promise<void>) {
         error instanceof HistoryBusyError
           ? `This project is open in another app (pid ${error.pid}), which keeps its history: undo, restore or pin there.`
           : (error as Error).message;
-      if ((args as { json?: boolean }).json) print(true, { ok: false, error: message }, message);
+      if ((args as { json?: boolean }).json) print(true, jsonFailure("refused", message), message);
       else console.error(message);
     }
   };
@@ -450,6 +456,10 @@ export default defineCommand({
             if (!args.path) return print(args.json, { files }, Object.keys(files).join("\n"));
             const hash = files[args.path];
             if (!hash) throw new Refusal(`${args.path} did not exist then`);
+            if (isUncopiedMedia(args.path))
+              throw new Refusal(
+                `${args.path} is video or audio: the history keeps that it changed, not its bytes`,
+              );
             process.stdout.write(await reader.blob(hash));
           }),
       ),
