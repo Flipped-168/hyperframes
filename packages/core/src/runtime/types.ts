@@ -282,6 +282,7 @@ export type RuntimePreviewHealthMessage = {
     frozenShare: number;
     gapP50Ms: number;
     gapP95Ms: number;
+    clockSource: "audio" | "webaudio" | "monotonic";
     mode: "play";
   } | null;
 };

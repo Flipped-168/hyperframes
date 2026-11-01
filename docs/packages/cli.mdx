@@ -2236,8 +2236,8 @@ allowance or estimate what the next video will cost.
 
 Opens the HyperFrames plans or credits page in the browser, then waits until the
 account shows the change, so an agent's run carries on by itself. The page is on
-the web app for `HYPERFRAMES_ENV`: hyperframes.studio, or dev.hyperframes.dev
-with `HYPERFRAMES_ENV=dev`.
+the web app at hyperframes.studio. `HYPERFRAMES_PLANS_URL` and
+`HYPERFRAMES_CREDITS_URL` point it at another page.
 
 ```bash
 npx hyperframes billing subscribe
@@ -2333,7 +2333,7 @@ hyperframes auth logout --yes            # no prompt
 | `HEYGEN_ACCESS_TOKEN` | OAuth token from a host app; never refreshed.    |
 | `HEYGEN_API_URL`      | API base URL (default `https://api.heygen.com`). |
 | `HYPERFRAMES_CONFIG_DIR` | Credentials root (default `~/.hyperframes`). |
-| `HYPERFRAMES_ENV` | `prod` (default) or `dev`; selects matching OAuth/API hosts and a separate dev credential directory. |
+| `HYPERFRAMES_ENV` | `prod` (default) or `dev`; `dev` uses a separate credential directory. Hosts and the OAuth client id come from `HEYGEN_API_URL` and `HYPERFRAMES_OAUTH_*`. |
 | `HYPERFRAMES_OAUTH_CLIENT_ID` | Override the selected public OAuth client. |
 
 For the keys other capabilities use — ElevenLabs and Gemini for voice and music
