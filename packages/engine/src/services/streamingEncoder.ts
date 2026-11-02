@@ -27,6 +27,7 @@ import { dirname } from "path";
 import {
   type GpuEncoder,
   getCachedGpuEncoder,
+  getCachedNvencPresets,
   getGpuEncoderName,
   buildVideoToolboxRateControlArgs,
   mapPresetForGpuEncoder,
@@ -233,6 +234,7 @@ export function buildStreamingArgs(
   options: StreamingEncoderOptions,
   outputPath: string,
   gpuEncoder: GpuEncoder = null,
+  nvencPresets?: ReadonlySet<string>,
 ): string[] {
   const {
     fps,
@@ -312,7 +314,7 @@ export function buildStreamingArgs(
 
       switch (gpuEncoder) {
         case "nvenc":
-          args.push("-preset", mapPresetForGpuEncoder("nvenc", preset));
+          args.push("-preset", mapPresetForGpuEncoder("nvenc", preset, nvencPresets));
           if (bitrate) args.push("-b:v", bitrate);
           else args.push("-cq", String(quality));
           break;
@@ -473,7 +475,7 @@ export function buildStreamingArgs(
       );
       args.push(
         "-filter_complex",
-        `${video};[0:v]format=rgba[o];[v][o]overlay=format=gbrp,${tail}[vout]`,
+        `${video};[0:v]format=rgba[o];[v][o]overlay=eof_action=endall:format=gbrp,${tail}[vout]`,
         "-map",
         "[vout]",
       );
@@ -521,7 +523,8 @@ export async function spawnStreamingEncoder(
     gpuEncoder = await getCachedGpuEncoder();
   }
 
-  const args = buildStreamingArgs(options, outputPath, gpuEncoder);
+  const nvencPresets = gpuEncoder === "nvenc" ? await getCachedNvencPresets() : undefined;
+  const args = buildStreamingArgs(options, outputPath, gpuEncoder, nvencPresets);
 
   const ffmpeg: ChildProcess = spawn(getFfmpegBinary(), args, {
     stdio: ["pipe", "pipe", "pipe"],

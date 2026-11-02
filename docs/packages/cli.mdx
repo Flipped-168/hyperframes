@@ -1920,6 +1920,9 @@ default 3); `--json` prints the results as JSON.
 
 ## Keep the environment healthy
 
+HyperFrames keeps what it downloads and builds (the headless browser, models, optional packages, fonts and project
+history) under `~/.cache/hyperframes`. Set `HYPERFRAMES_CACHE_DIR` to an absolute path to keep it somewhere else.
+
 ### `doctor`
 
 Check the machine for everything a render needs.
@@ -2281,6 +2284,11 @@ Opens a browser for OAuth:
 ```bash
 hyperframes auth login
 ```
+
+The command waits up to 60 minutes for you to finish in the browser, including
+choosing a plan and checking out. Press Ctrl+C to cancel. If it times out, run
+it again. On SSH or headless machines, where the browser can't reach this
+machine, use `hyperframes auth login --device`.
 
 Pass `--api-key` when you want a long-lived HeyGen API key instead. The key is
 verified against `GET /v3/users/me` before the command reports success, so a

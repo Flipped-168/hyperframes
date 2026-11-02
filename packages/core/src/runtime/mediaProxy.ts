@@ -4,7 +4,7 @@ import { evictMediaSyncState, HOLD_CAP_MS, isActiveAtPlayhead } from "./media";
 import { findInjectedRenderFrame } from "./renderFrameSibling";
 import type { RuntimeJson } from "./types";
 import { isVideoElement } from "./domRealm";
-import { swappedElements } from "./proxySrc";
+import { heldPosters, swappedElements } from "./proxySrc";
 import { restartPlaybackHealth } from "./playbackHealth";
 import { failedCopyElements, noteCopy, setCopyReportingLevel } from "./previewCopies";
 import { waitForServedProxy } from "./proxyWait";
@@ -156,8 +156,12 @@ function keepSized(el: HTMLMediaElement, scale: number): void {
   if (needed && lowered && copy.light && lightCopyNoLongerNeeded(el, needed)) {
     return restoreOriginal(el);
   }
-  if (boxCovers(copy.box, needed, lowered)) return;
+  if (boxCovers(copy.box, needed, lowered)) return dropUnneededCopy(el);
   requestBox(el, copy, lowered || !needed ? needed : growOnly(needed, copy.box));
+}
+
+function dropUnneededCopy(el: HTMLMediaElement): void {
+  if (pendingUpgrades.delete(el)) noteCopy(el, "ready");
 }
 
 function lightCopyNoLongerNeeded(el: HTMLMediaElement, needed: PreviewProxyBox): boolean {
@@ -193,7 +197,7 @@ function requestBox(el: HTMLMediaElement, copy: BoxedCopy, box: PreviewProxyBox 
   void waitForServedProxy(
     href,
     wanted,
-    (fraction) => noteCopy(el, "making", fraction),
+    (fraction) => wanted() && noteCopy(el, "making", fraction),
     () => isActiveAtPlayhead(el),
   ).then((served) => {
     if (wanted()) noteCopy(el, served ? "ready" : "failed");
@@ -211,9 +215,63 @@ function restoreOriginal(el: HTMLMediaElement): void {
   lightElements.delete(el);
   evictMediaSyncState(el);
   restartPlaybackHealth();
-  if (original === null) el.removeAttribute("src");
-  else el.setAttribute("src", original);
+  if (original === null) {
+    // No file loads, so no event would ever let a held still go.
+    letGoOfStill.get(el)?.();
+    el.removeAttribute("src");
+  } else {
+    holdShownFrame(el);
+    el.setAttribute("src", original);
+  }
   el.load();
+}
+
+// Wide enough to stand in for the picture for the moment a swap takes; small enough to encode in a few ms.
+const HELD_STILL_WIDTH = 640;
+const HAVE_CURRENT_DATA = 2;
+// The new file can draw (and is not seeking), or it failed and holding would freeze the picture.
+const RELEASE_EVENTS = ["loadeddata", "seeked", "error"] as const;
+const letGoOfStill = new WeakMap<HTMLMediaElement, () => void>();
+
+/** A swapped source empties the video until the new file decodes, which shows black. Until then it shows a still
+ * of the frame it had, as its poster. */
+function holdShownFrame(el: HTMLMediaElement): void {
+  if (!isVideoElement(el) || heldPosters.has(el)) return;
+  const still = stillOf(el);
+  if (!still) return;
+  heldPosters.set(el, { poster: el.getAttribute("poster"), since: performance.now() });
+  el.setAttribute("poster", still);
+  const letGo = () => {
+    for (const type of RELEASE_EVENTS) el.removeEventListener(type, release);
+    letGoOfStill.delete(el);
+    const authored = heldPosters.get(el)?.poster ?? null;
+    heldPosters.delete(el);
+    if (authored === null) el.removeAttribute("poster");
+    else el.setAttribute("poster", authored);
+  };
+  const release = (event: Event) => {
+    if (event.type === "error" || (el.readyState >= HAVE_CURRENT_DATA && !el.seeking)) letGo();
+  };
+  for (const type of RELEASE_EVENTS) el.addEventListener(type, release);
+  letGoOfStill.set(el, letGo);
+}
+
+/** The frame the video shows, as a JPEG data URL; null with no frame yet or one the page may not read. */
+function stillOf(el: HTMLVideoElement): string | null {
+  if (el.readyState < HAVE_CURRENT_DATA || !el.videoWidth || !el.videoHeight) return null;
+  const scale = Math.min(1, HELD_STILL_WIDTH / el.videoWidth);
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(el.videoWidth * scale));
+  canvas.height = Math.max(1, Math.round(el.videoHeight * scale));
+  try {
+    const context = canvas.getContext("2d");
+    if (!context) return null;
+    context.drawImage(el, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL("image/jpeg", 0.85);
+  } catch {
+    // A cross-origin frame taints the canvas: the swap goes ahead with nothing held.
+    return null;
+  }
 }
 
 function loadProxy(
@@ -229,6 +287,7 @@ function loadProxy(
   // Sync state measured on the previous file would read the new file's buffering as drift.
   evictMediaSyncState(el);
   restartPlaybackHealth();
+  holdShownFrame(el);
   el.src = href;
   el.load();
 }
@@ -448,6 +507,11 @@ async function makeCopy(el: HTMLMediaElement, job: CopyJob, scale: number | null
  * emit the one-time diagnostic + console line. Safe to call from any of the
  * three triggers (proactive/reactive/tertiary); a no-op if already swapped.
  */
+function copyVariant(entry: MediaCodecMapEntry | null): string {
+  if (!entry) return "auto";
+  return entry.hasAlpha ? "vp8" : "h264";
+}
+
 export function swapToProxy(
   el: HTMLMediaElement,
   entry: MediaCodecMapEntry | null = null,
@@ -457,7 +521,7 @@ export function swapToProxy(
   if (swappedElements.has(el)) return;
   if (proxyRequested.has(el) && proxyRequested.get(el) === el.getAttribute("src")) return;
   const originalSrc = currentSrcValue(el);
-  const variant = entry ? (entry.hasAlpha ? "vp8" : "h264") : "auto";
+  const variant = copyVariant(entry);
   try {
     new URL(originalSrc, document.baseURI);
   } catch (err) {
@@ -557,6 +621,56 @@ export function levelsWithLighterCopies(): PreviewQuality[] {
         isHeavyForPreview(facts, scalePreviewProxyBox(shown, level)),
       ),
   );
+}
+
+const COPY_AHEAD_CHECK_MS = 2000;
+const COPY_AHEAD_LEVEL: PreviewQuality = 0.5;
+let copiesAheadTimer: ReturnType<typeof setInterval> | null = null;
+let makingCopyAhead = false;
+const copiesAheadDone = new Set<string>();
+
+function copyAheadBox(el: HTMLMediaElement, isShown: (el: HTMLMediaElement) => boolean) {
+  if (displayScale === null || !isShown(el) || swappedElements.has(el)) return null;
+  const shown = shownBox(el, displayScale);
+  return shown && scalePreviewProxyBox(shown, COPY_AHEAD_LEVEL);
+}
+
+/** The 1/2 copy of a clip on screen that is heavy at that size, not yet made. */
+function nextCopyAhead(isShown: (el: HTMLMediaElement) => boolean): string | null {
+  if (previewQuality < 1) return null;
+  for (const el of document.querySelectorAll("video")) {
+    const facts = sourceFactsOf(el);
+    const box = facts && copyAheadBox(el, isShown);
+    if (!facts || !box || !isHeavyForPreview(facts, box)) continue;
+    const variant = copyVariant(codecEntryOf(el));
+    const href = appendProxyParam(currentSrcValue(el), variant, box, true, false);
+    if (!copiesAheadDone.has(href)) return href;
+  }
+  return null;
+}
+
+/** While on, makes those copies one at a time, starting none while `isBusy`. Off by default. */
+export function setCopiesAhead(
+  on: boolean,
+  isBusy: () => boolean,
+  isShown: (el: HTMLMediaElement) => boolean = isActiveAtPlayhead,
+): void {
+  if (copiesAheadTimer !== null) clearInterval(copiesAheadTimer);
+  copiesAheadTimer = null;
+  if (!on) return;
+  const live = () => copiesAheadTimer !== null && !isBusy();
+  const check = () => {
+    if (makingCopyAhead || isBusy()) return;
+    const href = nextCopyAhead(isShown);
+    if (href === null) return;
+    makingCopyAhead = true;
+    void waitForServedProxy(href, live, undefined, undefined, true).then((served) => {
+      makingCopyAhead = false;
+      if (served || live()) copiesAheadDone.add(href);
+    });
+  };
+  copiesAheadTimer = setInterval(check, COPY_AHEAD_CHECK_MS);
+  check();
 }
 
 /** The video files the composition plays, grouped by what they are, never by name. */

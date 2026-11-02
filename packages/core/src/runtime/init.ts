@@ -84,6 +84,7 @@ import { sourceTimeAt } from "../speedRamp";
 import { createWaapiAdapter } from "./adapters/waapi";
 import {
   MEDIA_SYNC_TOLERANCE_SECONDS,
+  MEDIA_HARD_SYNC_SECONDS,
   isUnplayable,
   mediaSourceTimeAt,
   primeMediaForLaterStarts,
@@ -106,6 +107,7 @@ import {
   levelsWithLighterCopies,
   retryPreviewCopies,
   setPreviewQuality,
+  setCopiesAhead,
   setProxyDisplayScale,
 } from "./mediaProxy";
 import {
@@ -158,7 +160,7 @@ import {
   forgetPositionEdit,
   installPositionEditsSeekReapply,
 } from "./positionEdits";
-import { unproxiedSrc } from "./proxySrc";
+import { stillStandsIn, unheldPoster, unproxiedSrc } from "./proxySrc";
 import { applyVariableBindings, unproxiedMediaSrc } from "./applyVariableBindings";
 import { createColorGradingRuntime, type RuntimeColorGradingApi } from "./colorGrading";
 import { COLOR_GRADING_AUTHORED_OPACITY_ATTR } from "../colorGrading";
@@ -385,9 +387,12 @@ const writtenShape = (el: Element): string =>
   JSON.stringify([
     Array.from(el.attributes, ({ name, value }) => [
       name,
-      name === "class" ? ownClasses(value) : value,
+      name === "class" ? ownClasses(value) : name === "poster" ? unheldPoster(el) : value,
     ])
-      .filter(([name, value]) => !RUNTIME_MEDIA_ATTRS.has(name!) && !(name === "class" && !value))
+      .filter(
+        ([name, value]) =>
+          !RUNTIME_MEDIA_ATTRS.has(name!) && !((name === "class" || name === "poster") && !value),
+      )
       .sort(([a], [b]) => (a! < b! ? -1 : 1)),
     el.hasAttribute("data-var-src") ? null : unproxiedSrc(el),
     el.innerHTML,
@@ -3099,6 +3104,8 @@ export function initSandboxRuntimeModular(): void {
       startPrefetch(next.el);
     }
   };
+  let bufferingFor: HTMLMediaElement[] = [];
+  let keepLateMedia = false;
   const preloadNearPlayhead = (
     el: HTMLMediaElement,
     visible: boolean,
@@ -3106,7 +3113,8 @@ export function initSandboxRuntimeModular(): void {
     time: number,
     forLoop: boolean,
   ) => {
-    const playing = clock.isPlaying();
+    // A hold for data is still playing: fetching other clips now would take bandwidth from the starved one.
+    const playing = clock.isPlaying() || bufferingFor.length > 0;
     if (!(visible && playing)) armedFrom.delete(el);
     else if (!armedFrom.has(el)) {
       armedFrom.add(el);
@@ -3142,7 +3150,10 @@ export function initSandboxRuntimeModular(): void {
       if (el.preload !== "none") {
         el.preload = "none";
         // Frees a clip the window armed; on one the parser started, it would only restart the fetch.
-        if (decided) withoutOwnTimingRecords(el, () => releaseMedia(el));
+        if (decided)
+          withoutOwnTimingRecords(el, () =>
+            releaseMedia(el, window.__HF_RELEASE_PASSED_MEDIA === true),
+          );
       }
     } else if (!visible || decided === undefined) {
       // Not a clip a jump lands on: the media sync arms that one, and load() would undo its seek.
@@ -3434,7 +3445,6 @@ export function initSandboxRuntimeModular(): void {
   let lastSyncedMediaTimeSeconds: number | null = null;
   let mediaClipsInWindow: RuntimeMediaClip[] = [];
   // Clips due now that could not play: every track holds until they can, so none runs on alone.
-  let bufferingFor: HTMLMediaElement[] = [];
 
   // The one definition of "media the transport drives": timed itself, or hosted
   // by a composition whose timing it inherits. Both the media cache and the
@@ -3634,6 +3644,11 @@ export function initSandboxRuntimeModular(): void {
     const end = Math.max(timelineEnd, resolveAdapterDurationFloorSeconds(true) ?? 0);
     return end > 0 && end < LOOP_INFLATED_TIMELINE_SECONDS ? end : null;
   };
+  window.__hf.clipWindow = (element) =>
+    runtimeElementWindow(element, {
+      timelineRegistry: window.__timelines ?? {},
+      resolver: timingResolverFor(true),
+    });
   window.__hf.audioMeter = {
     start: () => webAudio.startMetering(),
     stop: () => webAudio.stopMetering(),
@@ -3718,6 +3733,7 @@ export function initSandboxRuntimeModular(): void {
         userMuted: state.bridgeMuted,
         userVolume: state.bridgeVolume,
         forceSync,
+        keepLateMedia,
         cueAheadSeconds,
         clockAdvancing:
           clock.getSource() !== "audio" ||
@@ -4743,18 +4759,20 @@ export function initSandboxRuntimeModular(): void {
     postState(true);
   };
 
-  const haltPlayback = () => {
+  const haltPlayback = (starved = false) => {
     webAudio.stopAll();
     clock.detachAudioSource();
     clock.pause();
     state.isPlaying = false;
     state.currentTime = clock.now();
-    state.mediaForceSyncNextTick = true;
-    hardSyncAllMedia(state.currentTime);
+    state.mediaForceSyncNextTick = !starved;
+    keepLateMedia = starved;
+    hardSyncAllMedia(state.currentTime, starved ? MEDIA_HARD_SYNC_SECONDS : undefined);
     const tl = state.capturedTimeline;
     pauseTimelineIfPossible(tl);
     runAdapters("pause");
     syncMediaForCurrentState();
+    keepLateMedia = false;
     colorGrading.redraw();
     // Paused: back to plain DOM so Studio can select inside the composition.
     void paintCaptureMotionBlur(state.currentTime);
@@ -4764,6 +4782,7 @@ export function initSandboxRuntimeModular(): void {
   const transport: RuntimePlayerTransport = {
     play: () => {
       flushHeldSeek();
+      const resumingStarved = bufferingFor.length > 0;
       bufferingFor = [];
       const tl = state.capturedTimeline;
       if (clock.isPlaying()) return;
@@ -4780,8 +4799,9 @@ export function initSandboxRuntimeModular(): void {
       pauseTimelineIfPossible(tl);
       if (!clock.play()) return;
       state.isPlaying = true;
-      state.mediaForceSyncNextTick = true;
-      hardSyncAllMedia(clock.now());
+      state.mediaForceSyncNextTick = !resumingStarved;
+      keepLateMedia = resumingStarved;
+      hardSyncAllMedia(clock.now(), resumingStarved ? MEDIA_HARD_SYNC_SECONDS : undefined);
       // Schedule audio through WebAudio for sample-accurate timing.
       // Falls back to HTMLMediaElement playback if WebAudio isn't ready
       // or decoding fails (the syncRuntimeMedia path handles that).
@@ -4790,6 +4810,7 @@ export function initSandboxRuntimeModular(): void {
       }
       runAdapters("play");
       syncMediaForCurrentState();
+      keepLateMedia = false;
       primeMediaForLaterStarts(resolveMediaClipIndex().clips.map((clip) => clip.el));
       colorGrading.redraw();
       postState(true);
@@ -5668,10 +5689,16 @@ export function initSandboxRuntimeModular(): void {
   }
 
   const READY_AHEAD_SECONDS = 1;
-  // WebKit reports a paused element as HAVE_CURRENT_DATA however much it has buffered, so read the ranges too.
-  const hasDataAhead = (el: HTMLMediaElement): boolean => {
-    if (el.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) return true;
-    if (el.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return false;
+  // WebKit reports a paused element as HAVE_CURRENT_DATA however much it has buffered, so its ranges count too.
+  const hasDataAhead = (el: HTMLMediaElement): boolean =>
+    el.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA || (isWebKit() && canResumeFrom(el));
+  // HAVE_FUTURE_DATA can mean one frame, so a held film resumes only on the stricter reading.
+  const canResumeFrom = (el: HTMLMediaElement): boolean => {
+    if (el.readyState >= HTMLMediaElement.HAVE_ENOUGH_DATA) return true;
+    const least = isWebKit()
+      ? HTMLMediaElement.HAVE_CURRENT_DATA
+      : HTMLMediaElement.HAVE_FUTURE_DATA;
+    if (el.readyState < least) return false;
     const until = Math.min(el.currentTime + READY_AHEAD_SECONDS, el.duration) - 0.01;
     for (let i = 0; i < el.buffered.length; i++) {
       if (el.buffered.start(i) <= el.currentTime && el.buffered.end(i) >= until) return true;
@@ -5679,15 +5706,16 @@ export function initSandboxRuntimeModular(): void {
     return false;
   };
 
-  const mediaNotReadyAt = (t: number): HTMLMediaElement[] =>
+  const mediaNotReadyAt = (t: number, ready = hasDataAhead): HTMLMediaElement[] =>
     state.nativeMediaSyncDisabled
       ? []
       : mediaClipsInWindow
           .filter(
             ({ el, start, end }) =>
               isInClipWindow(t, start, end) &&
-              !hasDataAhead(el) &&
+              !ready(el) &&
               isPlayableTrack(el) &&
+              !stillStandsIn(el) &&
               !webAudio.ownsElement(el),
           )
           .map(({ el }) => el);
@@ -5789,11 +5817,13 @@ export function initSandboxRuntimeModular(): void {
           filmTime: t,
           fps: state.canonicalFps,
           rate: state.playbackRate,
-          playing,
+          playing: playing || bufferingFor.length > 0,
           hidden: document.visibilityState === "hidden",
-          waiting: mediaClipsInWindow.some(
-            ({ el }) => el.tagName === "VIDEO" && !el.paused && el.readyState < 3,
-          ),
+          waiting:
+            bufferingFor.length > 0 ||
+            mediaClipsInWindow.some(
+              ({ el }) => el.tagName === "VIDEO" && !el.paused && el.readyState < 3,
+            ),
           frozen: hasFrozenPicture(mediaClipsInWindow, t),
           clock: clock.followedClock(),
           layoutKey: `${window.innerWidth}x${window.innerHeight}@${window.devicePixelRatio}`,
@@ -5866,8 +5896,11 @@ export function initSandboxRuntimeModular(): void {
       const notReady = mediaNotReadyAt(state.currentTime);
       if (clock.isPlaying() && notReady.length > 0) {
         bufferingFor = notReady;
-        haltPlayback();
-      } else if (bufferingFor.length > 0 && !notReady.some((el) => bufferingFor.includes(el))) {
+        haltPlayback(true);
+      } else if (
+        bufferingFor.length > 0 &&
+        !mediaNotReadyAt(state.currentTime, canResumeFrom).some((el) => bufferingFor.includes(el))
+      ) {
         transport.play();
       }
       postState(false);
@@ -5880,14 +5913,14 @@ export function initSandboxRuntimeModular(): void {
     }
   };
 
-  const hardSyncAllMedia = (timeSeconds: number) => {
+  const hardSyncAllMedia = (timeSeconds: number, tolerance = 0.001) => {
     // Same clips and source time as the media sync that follows, so it has nothing left to seek.
     const clips = withTimingResolver(() => buildRuntimeMediaCache().mediaClips);
     for (const clip of transportMovableClips(clips) ?? []) {
       if (!clip.el.isConnected || !isInClipWindow(timeSeconds, clip.start, clip.end)) continue;
       const target = mediaSourceTimeAt(clip, timeSeconds);
       // A seek flushes the decoder even when it lands where the video already is.
-      if (Math.abs(clip.el.currentTime - target) <= 0.001) continue;
+      if (Math.abs(clip.el.currentTime - target) <= tolerance) continue;
       try {
         clip.el.currentTime = mediaElementTime(target);
       } catch {
@@ -6197,6 +6230,7 @@ export function initSandboxRuntimeModular(): void {
         },
       }),
     onSetPreviewQuality: setPreviewQuality,
+    onSetCopiesAhead: (on) => setCopiesAhead(on, () => clock.isPlaying()),
     onRetryPreviewCopies: retryPreviewCopies,
     onSetIdleHeartbeat: (slow) => {
       slowIdleHeartbeat = slow;

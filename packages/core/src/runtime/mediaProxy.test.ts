@@ -71,6 +71,26 @@ function isProxied(el: HTMLMediaElement): boolean {
 /** Lets a started swap ask for its copy (the default stub serves it) and finish. */
 const settle = () => new Promise((resolveSettle) => setTimeout(resolveSettle, 0));
 
+const STILL = "data:image/jpeg;base64,c3RpbGw=";
+/** The element shows a frame, and a 2D canvas can draw it (jsdom has none). */
+function showingFrame(el: HTMLVideoElement) {
+  Object.defineProperty(el, "readyState", { configurable: true, value: 4 });
+  Object.defineProperty(el, "videoWidth", { configurable: true, value: 1080 });
+  Object.defineProperty(el, "videoHeight", { configurable: true, value: 1920 });
+  const draw = vi.fn();
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+    drawImage: draw,
+  } as unknown as CanvasRenderingContext2D);
+  vi.spyOn(HTMLCanvasElement.prototype, "toDataURL").mockReturnValue(STILL);
+  return draw;
+}
+/** The poster the element has each time it loads a new file. */
+function postersAtLoad(el: HTMLVideoElement) {
+  const posters: (string | null)[] = [];
+  el.load = vi.fn(() => posters.push(el.getAttribute("poster")));
+  return posters;
+}
+
 beforeEach(() => {
   vi.stubGlobal(
     "fetch",
@@ -890,6 +910,51 @@ describe("a copy sized to how large the video shows", () => {
     expect(el.load).toHaveBeenCalledTimes(2);
   });
 
+  it("shows a still of its frame while a resized copy loads, then its own poster again", async () => {
+    const { el, setProxyDisplayScale } = await framedVideo(1080, 1920);
+    el.setAttribute("poster", "/cover.jpg");
+    setProxyDisplayScale(0.5);
+    await settle();
+    const draw = showingFrame(el);
+    const posters = postersAtLoad(el);
+
+    setProxyDisplayScale(1);
+    await settle();
+    expect(boxOf(el)).toBe("2436x4096");
+    expect(posters).toEqual([STILL]);
+    expect(draw).toHaveBeenCalledWith(el, 0, 0, 640, 1138);
+    // A scene swap compares the video as written, not with the still the swap put on it.
+    const { unheldPoster } = await import("./proxySrc");
+    expect(unheldPoster(el)).toBe("/cover.jpg");
+
+    // The new file seeking to the playhead still shows the still; once it can draw there, the authored poster is back.
+    Object.defineProperty(el, "seeking", { configurable: true, value: true });
+    el.dispatchEvent(new Event("loadeddata"));
+    expect(el.getAttribute("poster")).toBe(STILL);
+    Object.defineProperty(el, "seeking", { configurable: true, value: false });
+    el.dispatchEvent(new Event("seeked"));
+    expect(el.getAttribute("poster")).toBe("/cover.jpg");
+  });
+
+  it("lets go of the still when the resized copy fails, and holds nothing for a video with no frame yet", async () => {
+    const { el, setProxyDisplayScale } = await framedVideo(1080, 1920);
+    setProxyDisplayScale(0.5);
+    await settle();
+    showingFrame(el);
+    setProxyDisplayScale(1);
+    await settle();
+    expect(el.getAttribute("poster")).toBe(STILL);
+    // The new file has nothing to draw and fails: holding on would freeze the picture.
+    Object.defineProperty(el, "readyState", { configurable: true, value: 0 });
+    el.dispatchEvent(new Event("error"));
+    expect(el.hasAttribute("poster")).toBe(false);
+
+    const posters = postersAtLoad(el);
+    setProxyDisplayScale(2);
+    await settle();
+    expect(posters).toEqual([null]);
+  });
+
   it("loads the newest size asked for, even when an older, smaller copy is served first", async () => {
     const { el, setProxyDisplayScale } = await framedVideo(1080, 1920);
     setProxyDisplayScale(0.5);
@@ -960,6 +1025,121 @@ describe("preview quality: lighter copies of heavy files", () => {
     delete (window as { __HF_MEDIA_SOURCE_FACTS__?: unknown }).__HF_MEDIA_SOURCE_FACTS__;
   });
 
+  it("drops a smaller copy still being made when the level goes back up, so it never swaps in", async () => {
+    vi.useFakeTimers();
+    let lowerMade = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        lowerMade || !String(url).includes("hf-proxy-box=1024")
+          ? new Response("x", { status: 206 })
+          : new Response(null, { status: 202, headers: { "Retry-After": "2" } }),
+      ),
+    );
+    const { video, setPreviewQuality, maybeProxyProactively } = await stage(
+      { "/video.mp4": HEAVY },
+      { "/video.mp4": HEVC_ENTRY },
+    );
+    const { copiesReady } = await import("./previewCopies");
+    const el = video();
+    stubCanPlayType(el, "");
+    maybeProxyProactively(el);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(params(el).get("hf-proxy-box")).toBe("2048x1218");
+    expect(el.load).toHaveBeenCalledTimes(1);
+
+    setPreviewQuality(0.5);
+    await vi.advanceTimersByTimeAsync(0);
+    setPreviewQuality(1);
+    lowerMade = true;
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(params(el).get("hf-proxy-box")).toBe("2048x1218");
+    expect(el.load).toHaveBeenCalledTimes(1);
+    expect(copiesReady()).toBe(true);
+  });
+
+  describe("a lighter copy made ahead of time", () => {
+    const asked = () =>
+      vi.mocked(fetch).mock.calls.map(([href]) => new URL(String(href), document.baseURI));
+
+    it("is off until the host turns it on", async () => {
+      const { video } = await stage({ "/video.mp4": HEAVY });
+      video();
+      await settle();
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it("asks for the copy the first step down would use, and leaves the video on its source", async () => {
+      const { video, setCopiesAhead } = await stage({ "/video.mp4": HEAVY });
+      const el = video();
+      setCopiesAhead(
+        true,
+        () => false,
+        () => true,
+      );
+      await settle();
+      setCopiesAhead(false, () => false);
+
+      expect(asked()[0]?.searchParams.get("hf-proxy-box")).toBe("1024x724");
+      expect(asked()[0]?.searchParams.get("hf-proxy-light")).toBe("1");
+      expect(vi.mocked(fetch).mock.calls[0]?.[1]?.headers).toMatchObject({
+        "X-HF-Proxy-Priority": "0",
+      });
+      expect(isProxied(el)).toBe(false);
+    });
+
+    it("starts nothing while the film plays", async () => {
+      const { video, setCopiesAhead } = await stage({ "/video.mp4": HEAVY });
+      video();
+      setCopiesAhead(
+        true,
+        () => true,
+        () => true,
+      );
+      await settle();
+      setCopiesAhead(false, () => false);
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it("waits for the clip to be on screen", async () => {
+      const { video, setCopiesAhead } = await stage({ "/video.mp4": HEAVY });
+      video();
+      setCopiesAhead(true, () => false);
+      await settle();
+      setCopiesAhead(false, () => false);
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it("makes one at a time", async () => {
+      vi.mocked(fetch).mockImplementation(() => new Promise(() => {}));
+      const { video, setCopiesAhead } = await stage({ "/video.mp4": HEAVY, "/other.mp4": HEAVY });
+      video();
+      video("/other.mp4");
+      setCopiesAhead(
+        true,
+        () => false,
+        () => true,
+      );
+      await settle();
+      setCopiesAhead(false, () => false);
+      expect(fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("leaves a file alone that no lower level would lighten", async () => {
+      const { video, setCopiesAhead } = await stage({ "/video.mp4": LIGHT });
+      video();
+      setCopiesAhead(
+        true,
+        () => false,
+        () => true,
+      );
+      await settle();
+      setCopiesAhead(false, () => false);
+      expect(fetch).not.toHaveBeenCalled();
+    });
+  });
+
   it("changes nothing at full quality", async () => {
     const { video, setPreviewQuality, maybeProxyProactively } = await stage({
       "/video.mp4": HEAVY,
@@ -1002,10 +1182,37 @@ describe("preview quality: lighter copies of heavy files", () => {
     await settle();
     expect(isProxied(el)).toBe(true);
 
+    showingFrame(el);
+    const posters = postersAtLoad(el);
     setPreviewQuality(1);
 
     expect(el.getAttribute("src")).toBe("/video.mp4");
-    expect(el.load).toHaveBeenCalledTimes(2);
+    // One more load, and the lighter copy's frame stays up until the original can draw.
+    expect(posters).toEqual([STILL]);
+  });
+
+  it("lets go of a held still when the original has no src to put back", async () => {
+    const { video, setPreviewQuality, setProxyDisplayScale } = await stage({ "/video.mp4": HEAVY });
+    const el = video();
+    el.removeAttribute("src");
+    el.append(Object.assign(document.createElement("source"), { src: "/video.mp4" }));
+    Object.defineProperty(el, "currentSrc", {
+      configurable: true,
+      value: el.querySelector("source")!.src,
+    });
+    el.setAttribute("poster", "/cover.jpg");
+    setPreviewQuality(0.5);
+    await settle();
+    expect(isProxied(el)).toBe(true);
+    showingFrame(el);
+    setProxyDisplayScale(0.5);
+    await settle();
+    expect(el.getAttribute("poster")).toBe(STILL);
+
+    setPreviewQuality(1);
+
+    expect(el.hasAttribute("src")).toBe(false);
+    expect(el.getAttribute("poster")).toBe("/cover.jpg");
   });
 
   it("lightens a video that appears after the level was lowered", async () => {
