@@ -5,6 +5,8 @@ import {
   downloadToTemp,
   evaluateHfDiagnostic,
   extractMediaMetadata,
+  applyVideoMetadataHints,
+  holdRenderFrameVideos,
   isHdrColorSpace,
   sdrCanvasColourFilters,
 } from "@hyperframes/engine";
@@ -70,6 +72,7 @@ import {
   hdrToSdrToneMapFilter,
   isClipVisibleAt,
   isInClipWindow,
+  MEDIA_RENDER_ID_ATTR,
   parseFirstFrameColour,
   readElementRateSpec,
   sourceTimeAt,
@@ -92,6 +95,14 @@ import { runCancellableProcess } from "../utils/cancellableProcess.js";
 import { findFFmpeg, findFFprobe, getFFmpegInstallHint } from "../browser/ffmpeg.js";
 import { parseAngle, type Camera } from "./motionShotLayout.js";
 import { createFrameBank, type FrameWant, type PlannedFrame } from "./snapshotFrameBank.js";
+import {
+  heldVideoHints,
+  localVideoRenderIds,
+  localVideos,
+  probeHeldVideo,
+  projectLocalFile,
+  type HeldVideoProbe,
+} from "./snapshotHeldVideos.js";
 import type { Example } from "./_examples.js";
 import { loadInstalledSharp, loadOptionalPackage } from "../utils/optionalPackages.js";
 import { resolveLocalBrowserGpuMode, type BrowserGpuMode } from "../browser/gpuPolicy.js";
@@ -941,6 +952,7 @@ export async function captureSnapshots(
   }> = [];
   const replaced: string[] = [];
   const warnings: string[] = [];
+  let unreadVideoFrames = 0;
   let completed = false;
   const numFrames = opts.frames ?? 5;
   let review: ReviewPlan | undefined;
@@ -959,6 +971,9 @@ export async function captureSnapshots(
     console.warn(`   ${c.warn("⚠")} ${swallowed}`);
   }
   const server = await serveCapturePage(projectDir, html, opts.autoProxy);
+  const heldVideoIds = localVideoRenderIds(html);
+  const heldProbes = new Map<string, Promise<HeldVideoProbe>>();
+  const heldHints = await heldVideoHints(projectDir, localVideos(html), heldProbes);
 
   const savedPaths: string[] = [];
   let pairSheetFailure: string | null = null;
@@ -972,6 +987,15 @@ export async function captureSnapshots(
       renderReadyTimeoutMs: opts.timeout ?? RENDER_READY_TIMEOUT_MS,
       renderReadyWarningSuffix: "snapshots may be inaccurate",
       browserGpuMode: opts.browserGpuMode,
+      beforeNavigate: async (target) => {
+        if (heldVideoIds.length > 0)
+          await target.evaluateOnNewDocument(
+            holdRenderFrameVideos,
+            heldVideoIds,
+            MEDIA_RENDER_ID_ATTR,
+          );
+      },
+      onLoaded: (target) => applyVideoMetadataHints(target, heldHints),
     });
 
     try {
@@ -1026,7 +1050,7 @@ export async function captureSnapshots(
       });
 
       if (duration <= 0 && !opts.at?.length) {
-        return { paths: [], cleared: [], warnings, pairSheetsSkipped: false };
+        return { paths: [], cleared: [], warnings, unreadVideoFrames, pairSheetsSkipped: false };
       }
 
       const readTiming = () =>
@@ -1177,6 +1201,7 @@ export async function captureSnapshots(
           ),
       });
       const plannedClips = new Set<string>();
+      const heldVideos = new Set(heldVideoIds);
       const loopStartedAt = performance.now();
       let seekMs = 0;
       let videoMs = 0;
@@ -1199,7 +1224,7 @@ export async function captureSnapshots(
         if (cameraExpr) await page.evaluate(cameraExpr);
 
         if (injectVideoFramesBatch && syncVideoFrameVisibility) {
-          const candidates = await page.evaluate(() => {
+          const pageVideos = await page.evaluate(() => {
             const runtimeWindow = window as Window & {
               __hfResolveMediaStartSeconds?: (element: Element) => number;
             };
@@ -1233,6 +1258,16 @@ export async function captureSnapshots(
               };
             });
           });
+          const candidates = await Promise.all(
+            pageVideos.map(async (video) => {
+              const file = heldVideos.has(video.id)
+                ? projectLocalFile(projectDir, video.src)
+                : null;
+              return video.srcDuration > 0 || !file
+                ? video
+                : { ...video, srcDuration: (await probeHeldVideo(file, heldProbes)).duration };
+            }),
+          );
           let unreadable = 0;
           const active = candidates.flatMap((candidate) => {
             const video = activeVideoAt(candidate, time, duration);
@@ -1253,20 +1288,20 @@ export async function captureSnapshots(
               // since headless Chrome can't seek them and they would render blank.
               let ffmpegInput: string | null = null;
               let inputIsLocal = false;
-              try {
-                const url = new URL(v.src);
-                const decodedPath = decodeURIComponent(url.pathname).replace(/^\//, "");
-                const candidate = resolve(projectDir, decodedPath);
-                const rel = relative(projectDir, candidate);
-                if (!rel.startsWith("..") && !isAbsolute(rel) && existsSync(candidate)) {
-                  ffmpegInput = candidate;
-                  inputIsLocal = true;
-                } else if (url.protocol === "http:" || url.protocol === "https:") {
-                  ffmpegInput = await localCopy(url.href);
-                  inputIsLocal = ffmpegInput !== url.href;
+              const projectFile = projectLocalFile(projectDir, v.src);
+              if (projectFile) {
+                ffmpegInput = projectFile;
+                inputIsLocal = true;
+              } else {
+                try {
+                  const url = new URL(v.src);
+                  if (url.protocol === "http:" || url.protocol === "https:") {
+                    ffmpegInput = await localCopy(url.href);
+                    inputIsLocal = ffmpegInput !== url.href;
+                  }
+                } catch {
+                  /* unresolvable src (e.g. blob:, data:) — skip */
                 }
-              } catch {
-                /* unresolvable src (e.g. blob:, data:) — skip */
               }
               if (!ffmpegInput) return null;
               // The VP9-alpha probe has no timeout, so only local files get it;
@@ -1296,6 +1331,7 @@ export async function captureSnapshots(
               }
               const want = wantAt(time)!;
               const banked = await frameBank.take(ffmpegInput, want);
+              const warned = warnings.length;
               const png = await frameOrWarn(
                 warnings,
                 async () =>
@@ -1308,7 +1344,10 @@ export async function captureSnapshots(
                     want.displayedPixels,
                   ),
               );
-              if (!png) return null;
+              if (!png) {
+                if (warnings.length > warned) unreadVideoFrames += 1;
+                return null;
+              }
               return { videoId: v.id, dataUri: `data:image/png;base64,${png.toString("base64")}` };
             },
           );
@@ -1486,6 +1525,7 @@ export async function captureSnapshots(
     paths: savedPaths,
     cleared: replaced,
     warnings,
+    unreadVideoFrames,
     pairSheetsSkipped: pairSheetFailure !== null,
     ...(review && reviewList
       ? {
@@ -1508,6 +1548,7 @@ interface CapturedSnapshots {
   cleared: string[];
   /** Why a frame may differ from the composition: shown on the console and in `--json`. */
   warnings: string[];
+  unreadVideoFrames: number;
   /** --against wrote no pair sheets because sharp could not load. */
   pairSheetsSkipped: boolean;
   review?: { plan: ReviewPlan; frames: Array<ReviewFrame & { path: string }> };
@@ -1882,6 +1923,11 @@ export default defineCommand({
           const gone = onDisk.missing.map((path) => `\n   missing: ${path}`).join("");
           fail(
             `${c.error("✗")} Only ${paths.length} of ${captured.paths.length} snapshots are on disk in ${snapshotDir}.${gone}`,
+          );
+        }
+        if (captured.unreadVideoFrames > 0) {
+          fail(
+            `${c.error("✗")} ${captured.unreadVideoFrames} video frame(s) could not be read, so those videos are black or stale in the snapshots saved to ${snapshotDir}.`,
           );
         }
         if (against) {

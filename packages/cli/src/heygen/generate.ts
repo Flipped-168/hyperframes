@@ -12,9 +12,26 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, extname, join, relative, resolve } from "node:path";
+import type {
+  CreateModelVideoRequest,
+  CreateSpeechV3Request,
+  CreateVideoV3RequestBody,
+  ImageCreateRequest,
+  MusicCreateRequest,
+} from "../cloud/_gen/types.js";
 import { findCuts, signatures } from "../measure/cuts.js";
 import { Fix, probeVideo, projectOf, round, runFfmpeg, videoClip } from "../measure/media.js";
-import { idempotencyKey, runJob, type Job } from "./v3.js";
+import {
+  idempotencyKey,
+  keepVoice,
+  keptVoice,
+  publicVoices,
+  runJob,
+  senderScope,
+  type Job,
+  type JobRoute,
+  type Voice,
+} from "./v3.js";
 
 export type GenerateType = "image" | "video" | "avatar" | "voice" | "music";
 export const GENERATE_TYPES: readonly GenerateType[] = [
@@ -132,9 +149,7 @@ export function structureRatio(
   return { inside: sum[0]! / (n[0] || 1), ring: sum[1]! / (n[1] || 1) };
 }
 
-interface Route {
-  path: string;
-  poll: (id: string) => string;
+interface Route extends JobRoute {
   body: (r: GenerateRequest, media: Media) => Record<string, unknown>;
   /** Where the finished job keeps the file's URL. */
   urls: string[];
@@ -162,7 +177,9 @@ const need = <T>(value: T | undefined, flag: string, example: string): T => {
 const ROUTES: Record<GenerateType, Route> = {
   image: {
     path: "/v3/images",
-    poll: (id) => `/v3/images/${id}`,
+    start: (c, body, key, signal) =>
+      c.createImage({ body: body as ImageCreateRequest, idempotencyKey: key, signal }),
+    status: (c, id, signal) => c.getImage({ generation_id: id, signal }),
     body: (r, media) => ({
       model: r.model ?? DEFAULTS.image,
       prompt: need(r.prompt, "--prompt", '--prompt "the same room, empty, no text"'),
@@ -178,7 +195,9 @@ const ROUTES: Record<GenerateType, Route> = {
   },
   video: {
     path: "/v3/models/videos",
-    poll: (id) => `/v3/models/videos/${id}`,
+    start: (c, body, key, signal) =>
+      c.createModelVideo({ body: body as CreateModelVideoRequest, idempotencyKey: key, signal }),
+    status: (c, id, signal) => c.getModelVideo({ video_id: id, signal }),
     // fallow-ignore-next-line complexity
     body: (r, media) => {
       // A person speaking given audio is a reference shot: the references show who, the audio drives the lips.
@@ -212,16 +231,14 @@ const ROUTES: Record<GenerateType, Route> = {
   },
   avatar: {
     path: "/v3/videos",
-    poll: (id) => `/v3/videos/${id}`,
+    start: (c, body, key, signal) =>
+      c.createVideo({ body: body as CreateVideoV3RequestBody, idempotencyKey: key, signal }),
+    status: (c, id, signal) => c.getVideoV3({ video_id: id, signal }),
     body: (r, media) => ({
       type: "image",
       image: media(need(r.photo, "--photo", "--photo assets/presenter.png"), "image"),
       script: need(r.script, "--script", '--script "What they say"'),
-      voice_id: need(
-        r.voice,
-        "--voice",
-        "--voice <voice id> (npx hyperframes media-use resolve --type voice lists voices)",
-      ),
+      voice_id: need(r.voice, "--voice", "--voice <voice id or language>"),
       ...(r.aspect ? { aspect_ratio: r.aspect } : {}),
       output_format: "mp4",
     }),
@@ -230,11 +247,13 @@ const ROUTES: Record<GenerateType, Route> = {
     ext: [".mp4"],
   },
   voice: {
+    // Speech answers in the request and takes no Idempotency-Key, so there is no status to poll.
     path: "/v3/voices/speech",
-    poll: (id) => `/v3/voices/speech/${id}`,
+    start: (c, body, _key, signal) =>
+      c.createSpeechV3({ body: body as CreateSpeechV3Request, signal }),
     body: (r) => ({
       text: need(r.script, "--script", '--script "What the voice says"'),
-      voice_id: need(r.voice, "--voice", "--voice <voice id>"),
+      voice_id: need(r.voice, "--voice", "--voice <voice id or language>"),
     }),
     urls: ["audio_url"],
     ledger: "voice",
@@ -242,7 +261,9 @@ const ROUTES: Record<GenerateType, Route> = {
   },
   music: {
     path: "/v3/audio/music",
-    poll: (id) => `/v3/audio/music/${id}`,
+    start: (c, body, key, signal) =>
+      c.createMusic({ body: body as MusicCreateRequest, idempotencyKey: key, signal }),
+    status: (c, id, signal) => c.getMusic({ music_id: id, signal }),
     body: (r) => ({
       model: r.model ?? DEFAULTS.music,
       prompt: need(r.prompt, "--prompt", '--prompt "warm lo-fi beat, soft keys"'),
@@ -474,6 +495,38 @@ function checkGuide(r: Pick<GenerateRequest, "motion" | "allowCuts">): void {
 
 /** What the real call would refuse, checked without sending anything: `--plan` prices only a request that would run.
  *  The route's body runs with a stand-in for the media, so its required flags and conflicts are checked as sent. */
+const VOICE_ID = /^[0-9a-f]{32}$/i;
+
+export async function pickVoice(r: GenerateRequest): Promise<Voice> {
+  if (r.voice && VOICE_ID.test(r.voice)) return { voice_id: r.voice, name: r.voice };
+  if (!r.voice) {
+    const listed = (await publicVoices("English", 6))
+      .map((v) => `${v.voice_id} (${v.name}, ${v.gender ?? "?"})`)
+      .join("; ");
+    throw new Fix(
+      "--voice is missing",
+      `--voice <language>, e.g. --voice English, for HeyGen's first voice in it, or a voice id: ${listed}`,
+    );
+  }
+  const scope = await senderScope();
+  if (!scope)
+    throw new Fix(
+      "HeyGen did not say which account this sign-in is, so a voice picked now could differ on a re-run",
+      "run the same command again in a minute; pass --voice <voice id> to skip the pick",
+    );
+  const project = projectOf(dirname(resolve(r.out)));
+  const request = idempotencyKey("voice-pick", [
+    JSON.stringify({ ...r, out: resolve(r.out) }),
+    scope,
+  ]);
+  const kept = keptVoice(project, request);
+  if (kept) return kept;
+  const [voice] = await publicVoices(r.voice, 1);
+  if (!voice) throw new Fix(`HeyGen has no public voice for ${r.voice}`, "--voice <voice id>");
+  keepVoice(project, request, voice);
+  return voice;
+}
+
 export function checkRequest(r: GenerateRequest): void {
   const route = ROUTES[r.type];
   if (!route.ext.includes(extname(r.out).toLowerCase()))
@@ -514,7 +567,7 @@ export async function generate(
   try {
     const body = route.body(r, inline(work, r.masks));
     const key = idempotencyKey(route.path, [JSON.stringify(body)]);
-    const job = await runJob(route.path, body, key, (id) => route.poll(encodeURIComponent(id)), {
+    const job = await runJob(route, body, key, {
       log: {
         projectDir: project ?? undefined,
         what: `generate ${r.type} ${relative(project ?? ".", out)}`,

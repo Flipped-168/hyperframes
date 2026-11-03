@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { findFFmpeg } from "../browser/ffmpeg.js";
 import { probeVideo } from "../measure/media.js";
 
@@ -13,10 +13,26 @@ vi.mock("../cloud/auth.js", () => ({
 }));
 
 vi.stubEnv("HEYGEN_API_KEY", "k");
+vi.stubEnv("HEYGEN_API_URL", "https://api.test");
 
-const { checkRequest, foldShort, generate, parseMask, ringChange, structureRatio, urlOf } =
-  await import("./generate.js");
+const account = vi.hoisted(() => ({ scope: "acct" as string | null }));
+vi.mock("./v3.js", async (load) => ({
+  ...(await load<typeof import("./v3.js")>()),
+  senderScope: async () => account.scope,
+}));
+
+const {
+  checkRequest,
+  foldShort,
+  generate,
+  parseMask,
+  pickVoice,
+  ringChange,
+  structureRatio,
+  urlOf,
+} = await import("./generate.js");
 const { checkLimit, creditsOf, priceOf } = await import("./pricing.js");
+type GenerateRequest = import("./generate.js").GenerateRequest;
 const ffmpeg = findFFmpeg();
 const project = mkdtempSync(join(tmpdir(), "hf-generate-test-"));
 writeFileSync(join(project, "index.html"), "<html></html>");
@@ -24,6 +40,22 @@ afterAll(() => rmSync(project, { recursive: true, force: true }));
 afterEach(() => vi.unstubAllGlobals());
 
 const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
+
+/** Runs `work` to the end with the poll interval's timers fast-forwarded. */
+async function settled<T>(work: Promise<T>): Promise<T> {
+  vi.useFakeTimers({ toFake: ["setTimeout"] });
+  let done = false;
+  const run = work.finally(() => (done = true));
+  try {
+    while (!done) {
+      await new Promise((r) => setImmediate(r));
+      await vi.advanceTimersByTimeAsync(5000);
+    }
+    return await run;
+  } finally {
+    vi.useRealTimers();
+  }
+}
 
 /** A 30 fps clip of these lavfi sources one after another: each new source is a cut. */
 function shots(name: string, sources: string[], size = "180x320"): string {
@@ -674,6 +706,82 @@ describe("generate", () => {
   });
 });
 
+describe("each route through the generated client", () => {
+  // Keys an earlier refusal in this file marked failed would move this file's keys on.
+  beforeEach(() => {
+    vi.stubEnv("HYPERFRAMES_CONFIG_DIR", mkdtempSync(join(tmpdir(), "hf-route-test-")));
+  });
+  const file = "https://files.test/route-result";
+  const routes = [
+    { type: "image", path: "/v3/images", ext: "png", done: { images: [{ url: file }] } },
+    { type: "video", path: "/v3/models/videos", ext: "mp4", done: { video_url: file } },
+    { type: "avatar", path: "/v3/videos", ext: "mp4", done: { video_url: file } },
+    { type: "voice", path: "/v3/voices/speech", ext: "mp3", done: { audio_url: file } },
+    { type: "music", path: "/v3/audio/music", ext: "mp3", done: { audio_url: file } },
+  ] as const;
+  const request = (type: GenerateRequest["type"], ext: string): GenerateRequest => {
+    const photo = join(project, "route-photo.png");
+    if (type === "avatar")
+      execFileSync(ffmpeg!, [
+        ...["-v", "error", "-y", "-f", "lavfi", "-i", "color=c=red:s=64x64"],
+        ...["-frames:v", "1", photo],
+      ]);
+    return {
+      type,
+      out: join(project, `assets/route-${type}.${ext}`),
+      prompt: "a desk",
+      script: "Hello",
+      voice: "c".repeat(32),
+      ...(type === "avatar" ? { photo } : {}),
+    };
+  };
+
+  for (const { type, path, ext, done } of routes) {
+    const polled = type !== "voice";
+    it.skipIf(!ffmpeg && type === "avatar")(
+      `${type}: posts ${path}${polled ? ", keyed, and polls it to completion" : " once, unkeyed"}`,
+      async () => {
+        const calls: { url: string; method?: string; key: string | null; body?: unknown }[] = [];
+        const answers = polled
+          ? [
+              json({ data: { id: "j/1", status: "pending" } }),
+              json({ data: { id: "j/1", status: "completed", ...done } }),
+            ]
+          : [json({ data: { ...done, duration: 1 } })];
+        vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+          calls.push({
+            url,
+            method: init?.method,
+            key: new Headers(init?.headers).get("Idempotency-Key"),
+            ...(init?.body ? { body: JSON.parse(String(init.body)) } : {}),
+          });
+          if (url === file) return new Response(new Uint8Array([1]));
+          return answers.shift()!;
+        });
+        const r = await settled(generate(request(type, ext)));
+        const [post, ...rest] = calls;
+        expect(post).toMatchObject({ url: `https://api.test${path}`, method: "POST" });
+        expect(post!.key).toEqual(polled ? expect.stringMatching(/^hf-[0-9a-f]{40}$/) : null);
+        expect(post!.body).toBeTypeOf("object");
+        expect(rest.map((c) => [c.url, c.method])).toEqual([
+          ...(polled ? [[`https://api.test${path}/j%2F1`, "GET"]] : []),
+          [file, undefined],
+        ]);
+        expect(r).toMatchObject({ route: path, job: polled ? "j/1" : "" });
+      },
+    );
+
+    it.skipIf(!ffmpeg && type === "avatar")(`${type}: says what a refusal needs`, async () => {
+      vi.stubGlobal(
+        "fetch",
+        async () =>
+          new Response(JSON.stringify({ error: { code: "hf_usage_exhausted" } }), { status: 402 }),
+      );
+      await expect(generate(request(type, ext))).rejects.toThrow("out of HyperFrames credits");
+    });
+  }
+});
+
 describe("foldShort", () => {
   it("folds a piece of a few frames into its neighbour", () => {
     expect(foldShort([4, 4.1, 8], 10)).toEqual([4.1, 8]);
@@ -685,5 +793,157 @@ describe("foldShort", () => {
   it("keeps a real cut near the guide's edge, which would land inside a paid shot", () => {
     expect(foldShort([5, 9.7], 10)).toEqual([5, 9.7]);
     expect(foldShort([0.3], 10)).toEqual([0.3]);
+  });
+});
+
+describe("pickVoice", () => {
+  const voice = (id: string, name: string) => ({ voice_id: id.repeat(32), name, gender: "female" });
+  let catalog = [voice("a", "Lin"), voice("b", "Wei")];
+  const asked: string[] = [];
+  const posts: { key: string | null; body: Record<string, unknown> }[] = [];
+  const heygen = () =>
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      asked.push(url);
+      if (url.includes("/v3/voices?")) return json({ data: catalog });
+      if (url === "https://files.test/vo.mp3") return new Response(new Uint8Array([1]));
+      if (init?.method === "POST") {
+        const key = new Headers(init.headers).get("Idempotency-Key");
+        posts.push({ key, body: JSON.parse(String(init.body)) });
+      }
+      // Speech answers in the request; a video is a job to poll.
+      if (url.endsWith("/v3/voices/speech"))
+        return json({ data: { audio_url: "https://files.test/vo.mp3", duration: 1 } });
+      return json({ data: { id: "j1", status: "pending" } });
+    });
+  afterEach(() => {
+    vi.useRealTimers();
+    account.scope = "acct";
+    catalog = [voice("a", "Lin"), voice("b", "Wei")];
+    asked.length = 0;
+    posts.length = 0;
+  });
+
+  it("takes a voice id as given, without asking HeyGen", async () => {
+    heygen();
+    const r = { type: "voice" as const, out: "vo.mp3", voice: "c".repeat(32) };
+    expect((await pickVoice(r)).voice_id).toBe("c".repeat(32));
+    expect(asked).toEqual([]);
+  });
+
+  it("picks HeyGen's first public voice for a language", async () => {
+    heygen();
+    const r = { type: "voice" as const, out: join(project, "assets/a.mp3"), voice: "Chinese" };
+    expect((await pickVoice(r)).name).toBe("Lin");
+    expect(asked[0]).toBe("https://api.test/v3/voices?type=public&language=Chinese&limit=1");
+  });
+
+  it("says what to do when HeyGen will not list its voices", async () => {
+    vi.stubGlobal(
+      "fetch",
+      async () =>
+        new Response(JSON.stringify({ error: { code: "unauthorized" } }), { status: 401 }),
+    );
+    await expect(pickVoice({ type: "voice", out: "vo.mp3" })).rejects.toMatchObject({
+      message: "HeyGen 401 listing its voices",
+      fix: "run the same command again",
+    });
+  });
+
+  it("lists voices to pick from when none is named", async () => {
+    heygen();
+    await expect(pickVoice({ type: "voice", out: "vo.mp3" })).rejects.toMatchObject({
+      message: "--voice is missing",
+      fix: expect.stringContaining(`${"a".repeat(32)} (Lin, female)`),
+    });
+  });
+
+  // The command's own path: pick, then generate; a timeout, a reordered catalog, the same command.
+  const runOnce = async (r: GenerateRequest) => {
+    const request = { ...r };
+    const picked = await pickVoice(request).catch((err: unknown) => err);
+    if (picked instanceof Error) return picked;
+    request.voice = (picked as { voice_id: string }).voice_id;
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout"] });
+    const run = generate(request).catch((err: unknown) => err);
+    await vi.advanceTimersByTimeAsync(31 * 60_000);
+    vi.useRealTimers();
+    return run;
+  };
+
+  for (const [type, extra] of [
+    ["voice", "mp3"],
+    ["avatar", "mp4"],
+  ] as const) {
+    it.skipIf(!ffmpeg)(
+      `keeps the first voice for a ${type} re-run after the catalog reorders`,
+      async () => {
+        heygen();
+        const face = join(project, "face.png");
+        execFileSync(ffmpeg!, [
+          "-v",
+          "error",
+          "-y",
+          "-f",
+          "lavfi",
+          "-i",
+          "color=red:s=64x64",
+          "-frames:v",
+          "1",
+          face,
+        ]);
+        const r: GenerateRequest = {
+          type,
+          out: join(project, `assets/${type}-retry.${extra}`),
+          voice: "Chinese",
+          script: "你好",
+          ...(type === "avatar" ? { photo: face } : {}),
+        };
+        expect(await runOnce(r)).toMatchObject(
+          type === "voice"
+            ? { route: "/v3/voices/speech" }
+            : { message: "HeyGen job j1 is still pending" },
+        );
+        catalog = [voice("b", "Wei"), voice("a", "Lin")];
+        await runOnce(r);
+        expect(posts).toHaveLength(2);
+        expect(posts[1]!.key).toBe(posts[0]!.key);
+        expect(posts[1]!.body).toEqual(posts[0]!.body);
+        expect(posts[0]!.body.voice_id).toBe("a".repeat(32));
+      },
+    );
+  }
+  const shot = (name: string): GenerateRequest => ({
+    type: "voice",
+    out: join(project, `assets/${name}.mp3`),
+    voice: "Chinese",
+    script: "你好",
+  });
+
+  it("refuses before any pick or POST while the account is unknown, then picks once it is", async () => {
+    heygen();
+    account.scope = null;
+    expect(await runOnce(shot("who-later"))).toMatchObject({
+      message: expect.stringContaining("did not say which account"),
+    });
+    expect(posts).toHaveLength(0);
+    expect(asked).toEqual([]);
+    account.scope = "acct";
+    await runOnce(shot("who-later"));
+    expect(posts.map((p) => p.body.voice_id)).toEqual(["a".repeat(32)]);
+  });
+
+  it("refuses a re-run while the account is unknown instead of starting another job", async () => {
+    heygen();
+    await runOnce(shot("who-lost"));
+    account.scope = null;
+    catalog = [voice("b", "Wei"), voice("a", "Lin")];
+    expect(await runOnce(shot("who-lost"))).toMatchObject({
+      message: expect.stringContaining("did not say which account"),
+    });
+    expect(posts).toHaveLength(1);
+    account.scope = "acct";
+    await runOnce(shot("who-lost"));
+    expect(posts[1]!.key).toBe(posts[0]!.key);
+    expect(posts[1]!.body).toEqual(posts[0]!.body);
   });
 });
