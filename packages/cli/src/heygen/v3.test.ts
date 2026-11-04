@@ -1,8 +1,11 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { CreateModelVideoRequest } from "../cloud/_gen/types.js";
+import type {
+  CreateBackgroundRemovalRequest,
+  CreateModelVideoRequest,
+} from "../cloud/_gen/types.js";
 import type { JobRoute } from "./v3.js";
 
 vi.mock("../cloud/auth.js", () => ({
@@ -11,7 +14,7 @@ vi.mock("../cloud/auth.js", () => ({
   resolveCloudBaseUrl: () => "https://api.test",
 }));
 
-const { idempotencyKey, runJob } = await import("./v3.js");
+const { idempotencyKey, ownVoices, runJob } = await import("./v3.js");
 
 /** A job route through the generated client: the create and the status GET it polls. */
 const X: JobRoute = {
@@ -55,12 +58,103 @@ describe("runJob", () => {
     expect(new Headers(calls[0]!.init.headers).get("Idempotency-Key")).toBe("hf-key");
   });
 
+  it("logs a job that is done at once one time, and a waited-for job at each end", async () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "hf-v3-log-"));
+    const rows = () =>
+      readFileSync(join(projectDir, ".hyperframes/heygen-jobs.jsonl"), "utf8")
+        .trim()
+        .split("\n")
+        .map((row) => JSON.parse(row).status);
+    const log = { projectDir, what: "a line" };
+    vi.stubGlobal("fetch", async () => reply(200, { data: { id: "j1", status: "completed" } }));
+    await runJob(X, {}, "k1", { log });
+    expect(rows()).toEqual(["completed"]);
+    const answers = ["pending", "completed"].map((status) =>
+      reply(200, { data: { id: "j2", status } }),
+    );
+    vi.stubGlobal("fetch", async () => answers.shift()!);
+    await runJob(X, {}, "k2", { log, intervalMs: 1 });
+    expect(rows()).toEqual(["completed", "pending", "completed"]);
+  });
+
+  describe("with a run credit limit", () => {
+    const project = (limit: number) => {
+      const projectDir = mkdtempSync(join(tmpdir(), "hf-v3-limit-"));
+      mkdirSync(join(projectDir, ".hyperframes"));
+      writeFileSync(
+        join(projectDir, ".hyperframes/credit-limit.json"),
+        JSON.stringify({ credits: limit }),
+      );
+      return { projectDir, what: "a line" };
+    };
+    const sent = () => {
+      const calls: string[] = [];
+      vi.stubGlobal("fetch", async (url: string) => {
+        calls.push(url);
+        return reply(200, { data: { id: "j", status: "completed" } });
+      });
+      return calls;
+    };
+
+    it("refuses a call over what is left, before sending, with no --max-credits given", async () => {
+      const calls = sent();
+      const log = project(100);
+      await runJob(X, {}, "k1", { log, credits: 60 });
+      await expect(runJob(X, {}, "k2", { log, credits: 60 })).rejects.toThrow(/leaves 40/);
+      expect(calls).toHaveLength(1);
+      await runJob(X, {}, "k3", { log, credits: 40 });
+      expect(calls).toHaveLength(2);
+    });
+
+    it("refuses a call that cannot be priced ahead", async () => {
+      const calls = sent();
+      await expect(runJob(X, {}, "k", { log: project(100) })).rejects.toThrow(/cannot be priced/);
+      expect(calls).toHaveLength(0);
+    });
+
+    it.each([429, 422])(
+      "keeps a lost job's reservation through a resume refused with %i",
+      async (status) => {
+        const log = project(100);
+        vi.stubGlobal("fetch", async () => {
+          throw new Error("socket hang up");
+        });
+        await expect(runJob(X, {}, "k1", { log, credits: 100 })).rejects.toThrow();
+        vi.stubGlobal("fetch", async () => reply(status, { error: { code: "no", message: "no" } }));
+        await expect(runJob(X, {}, "k1", { log, credits: 100 })).rejects.toThrow();
+        const calls = sent();
+        await expect(runJob(X, {}, "k2", { log, credits: 100 })).rejects.toThrow(/leaves 0/);
+        expect(calls).toHaveLength(0);
+      },
+    );
+
+    it("keeps the reservation of a fresh call refused with 429, which says nothing about the job", async () => {
+      const log = project(100);
+      vi.stubGlobal("fetch", async () => reply(429, { error: { code: "rate", message: "slow" } }));
+      await expect(runJob(X, {}, "k1", { log, credits: 100 })).rejects.toThrow();
+      await expect(runJob(X, {}, "k2", { log, credits: 100 })).rejects.toThrow(/leaves 0/);
+    });
+
+    it("lets the same job resume, and gives back a refused call's credits", async () => {
+      const log = project(100);
+      const calls = sent();
+      await runJob(X, {}, "k1", { log, credits: 100 });
+      await runJob(X, {}, "k1", { log, credits: 100 });
+      expect(calls).toHaveLength(2);
+      const fresh = project(100);
+      vi.stubGlobal("fetch", async () => reply(422, { error: { code: "bad", message: "no" } }));
+      await expect(runJob(X, {}, "k2", { log: fresh, credits: 100 })).rejects.toThrow();
+      vi.stubGlobal("fetch", async () => reply(200, { data: { id: "j", status: "completed" } }));
+      await runJob(X, {}, "k3", { log: fresh, credits: 100 });
+    });
+  });
+
   it("turns refusals into what to do next", async () => {
     vi.stubGlobal("fetch", async () =>
       reply(402, { error: { code: "insufficient_credit", message: "no" } }),
     );
     await expect(runJob(X, {}, "k")).rejects.toMatchObject({
-      fix: expect.stringContaining("top up"),
+      fix: expect.stringContaining("add-on credits"),
     });
     vi.stubGlobal("fetch", async () =>
       reply(402, { error: { code: "hf_subscription_required", message: "no plan" } }),
@@ -72,7 +166,7 @@ describe("runJob", () => {
       reply(402, { code: "hf_usage_exhausted", url: "https://pay.test/credits" }),
     );
     await expect(runJob(X, {}, "k")).rejects.toMatchObject({
-      fix: "Add credits: https://pay.test/credits",
+      fix: "Buy add-on credits: https://pay.test/credits",
     });
     vi.stubGlobal("fetch", async () => reply(401, { message: "bad" }));
     await expect(runJob(X, {}, "k")).rejects.toMatchObject({
@@ -92,7 +186,7 @@ describe("runJob", () => {
       message: expect.stringContaining("this step needs about 782 in total"),
     });
     await expect(runJob(X, {}, "k", { credits: 782 })).rejects.toMatchObject({
-      message: expect.stringContaining("billing top-up --needed 782"),
+      message: expect.stringContaining("billing add-credits --needed 782"),
       fix: expect.stringContaining("needed_credits=782"),
     });
     vi.stubGlobal("fetch", async () =>
@@ -143,6 +237,43 @@ describe("runJob", () => {
     expect(keys).toEqual(["hf-broke", "hf-broke-1"]);
   });
 
+  it("puts the key in the body for a route that dedupes there, and moves it only past a failed job", async () => {
+    const jobs = new Map<string, string>();
+    const sent: string[] = [];
+    let status = "completed";
+    let lose = false;
+    vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
+      if (init.method !== "POST") return reply(200, { data: { id: "j", status } });
+      // like /v3/background-removals: the header is ignored, the body's request_id picks the job
+      const id = String(JSON.parse(String(init.body)).request_id);
+      sent.push(id);
+      if (!jobs.has(id)) jobs.set(id, `job-${jobs.size}`);
+      if (lose) return reply(408, { message: "timeout" });
+      return reply(200, { data: { id: jobs.get(id), status } });
+    });
+    const cut: JobRoute = {
+      path: "/v3/background-removals",
+      start: (c, body, key, signal) =>
+        c.createBackgroundRemoval({
+          body: { ...(body as CreateBackgroundRemovalRequest), request_id: key },
+          signal,
+        }),
+      status: (c, id, signal) => c.getBackgroundRemoval({ job_id: id, signal }),
+    };
+    const go = () => runJob(cut, { layers: ["foreground"] }, "hf-cut", { intervalMs: 1 });
+    lose = true;
+    await expect(go()).rejects.toThrow();
+    lose = false;
+    await go();
+    expect(jobs.size).toBe(1);
+    status = "failed";
+    await expect(go()).rejects.toThrow();
+    status = "completed";
+    await go();
+    expect(sent).toEqual(["hf-cut", "hf-cut", "hf-cut", "hf-cut-1"]);
+    expect(jobs.size).toBe(2);
+  });
+
   it.each([401, 403, 408, 409, 425, 429])(
     "keeps the key after a %i, which says nothing about the job",
     async (status) => {
@@ -165,7 +296,8 @@ describe("runJob", () => {
   it("does not let one account's failure move another account's key", async () => {
     const keys: (string | null)[] = [];
     const run = (answers: Response[]) => {
-      vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
+      vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+        if (url.endsWith("/v1/pacific/account.get")) return reply(404, {}); // the refusal link's workspace read
         keys.push(new Headers(init.headers).get("Idempotency-Key"));
         return answers.shift()!;
       });
@@ -193,6 +325,7 @@ describe("runJob", () => {
     ) => {
       const keys: (string | null)[] = [];
       vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+        if (url.endsWith("/v1/pacific/account.get")) return reply(404, {}); // the refusal link's workspace read
         if (!url.endsWith("/v3/users/me")) {
           if (init.method === "POST") keys.push(new Headers(init.headers).get("Idempotency-Key"));
           const answer = answers.shift()!;
@@ -365,5 +498,31 @@ describe("runJob", () => {
       idempotencyKey("/v3/x", ["a", Buffer.from("b")]),
     );
     expect(idempotencyKey("/v3/x", ["a"])).not.toBe(idempotencyKey("/v3/y", ["a"]));
+  });
+});
+
+describe("ownVoices", () => {
+  it("lists the clones of the HyperFrames sign-in's workspace only, never another account's", async () => {
+    const asked: { url: string; key: string | null }[] = [];
+    const clonesByKey: Record<string, string> = {
+      k: "film-account-clone",
+      "heygen-cli-login": "other-account-clone",
+    };
+    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+      const key = new Headers(init.headers).get("x-api-key");
+      asked.push({ url, key });
+      return reply(200, { data: [{ voice_id: "v1", name: clonesByKey[key ?? ""] }] });
+    });
+    expect(await ownVoices(5)).toEqual([
+      { voice_id: "v1", name: "film-account-clone", language: undefined, gender: undefined },
+    ]);
+    expect(asked).toHaveLength(1);
+    expect(new URL(asked[0]!.url).searchParams.get("type")).toBe("private");
+    expect(asked[0]!.key).toBe("k");
+  });
+
+  it("refuses with the sign-in fix when the HyperFrames account cannot be reached, instead of listing anything", async () => {
+    vi.stubGlobal("fetch", async () => reply(401, { message: "no" }));
+    await expect(ownVoices(5)).rejects.toMatchObject({ fix: "npx hyperframes auth login" });
   });
 });
