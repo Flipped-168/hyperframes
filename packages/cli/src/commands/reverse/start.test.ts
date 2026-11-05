@@ -1,5 +1,5 @@
 import { runCommand } from "citty";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -169,12 +169,29 @@ describe("reverse start", () => {
       { recorded: false, reason: "unavailable", plan: "free" },
       { signed_in: true, plan: "free", recorded: false },
     ],
-  ])("never stops the run when %s", async (_label, answer, reverse) => {
-    server.answer = answer;
+  ])(
+    "never stops the run when %s, and still makes the --dir project",
+    async (_label, answer, reverse) => {
+      server.answer = answer;
+      const dir = join(root, "rebuild");
+      await run("--dir", dir);
+      expect(output()).toMatchObject({
+        ok: true,
+        width: 1080,
+        reverse: { ...reverse, saved_to: join(dir, "hyperframes.json") },
+      });
+      expect(config(dir)).toMatchObject({ authoringSkill: "reverse-any-video" });
+      expect(config(dir)).not.toHaveProperty("reverseSessionId");
+    },
+  );
+
+  it("names no saved_to when the --dir project's config is broken, and leaves it as it was", async () => {
     const dir = join(root, "rebuild");
+    mkdirSync(dir);
+    writeFileSync(join(dir, "hyperframes.json"), "{ not json");
     await run("--dir", dir);
-    expect(output()).toMatchObject({ ok: true, width: 1080, reverse });
-    expect(() => readFileSync(join(dir, "hyperframes.json"))).toThrow();
+    expect(output()).toMatchObject({ ok: true, reverse: { recorded: false, saved_to: null } });
+    expect(readFileSync(join(dir, "hyperframes.json"), "utf-8")).toBe("{ not json");
   });
 
   it("stops a Free account the server blocks, with the subscribe command as the fix, after saving the session", async () => {
@@ -185,7 +202,7 @@ describe("reverse start", () => {
     );
     const dir = join(root, "rebuild");
     await expect(run("--dir", dir)).rejects.toThrow(CliRuntimeError);
-    const command = `npx hyperframes billing subscribe --feature reverse --session ${SESSION}`;
+    const command = `npx hyperframes billing subscribe --feature reverse --skill reverse-any-video --session ${SESSION}`;
     expect(output()).toMatchObject({
       ok: false,
       error: expect.stringContaining(command),
@@ -198,7 +215,7 @@ describe("reverse start", () => {
     server.answer = recorded("free");
     await run();
     expect(output().reverse).toMatchObject({
-      subscribe_command: `npx hyperframes billing subscribe --feature reverse --session ${SESSION}`,
+      subscribe_command: `npx hyperframes billing subscribe --feature reverse --skill reverse-any-video --session ${SESSION}`,
     });
   });
 
