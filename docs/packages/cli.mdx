@@ -1007,8 +1007,9 @@ npx hyperframes normalize-audio --reference target-audio --target user-audio --j
 `--reference` and `--target` are `<audio>` element ids, with or without `#`.
 The reference stays unchanged; the command accounts for both clips' current
 `data-volume` and writes the target's absolute matched gain. It measures
-`data-media-start` and `data-duration`, rejects remote or out-of-project sources,
-and refuses a result that exceeds Studio's +12 dB ceiling or would clip. Dry-run
+`data-media-start` and `data-duration` and rejects remote or out-of-project sources.
+Where a full match would pass Studio's +12 dB ceiling or -1.5 dBTP, it applies the
+most that fits and says how far under the reference that leaves the target. Dry-run
 is deliberate: inspect the measurement before passing `--write`. Use
 `--tolerance <LU>` to change the default 0.5 LU no-op threshold.
 
@@ -1249,6 +1250,7 @@ cover every finding from the full check.
 | `--collapse-static` / `--no-collapse-static` | Fold a repeated static finding into one row (default: on)                                                                    |
 | `--tolerance`                                | Allowed overflow in px before reporting (default 2)                                                                         |
 | `--timeout`                                  | Render-ready budget in ms; also raises page navigation above its 10s floor (default 45000, as snapshot and render)                                   |
+| `--budget <ms\|90s\|8m>`                      | Stop the whole check this long after it starts (at least 30s) and report what it found, with `check_budget_reached` naming the phase it was in. For hosts with their own time limit. |
 | `--no-contrast`                              | Skip the WCAG pass while iterating                                                                                         |
 | `--strict`                                   | Exit non-zero on warnings too (default: errors only)                                                                        |
 | `--caption-zone "<x0=..;y0=..;x1=..;y1=..>"` | Opt-in band gate. Flags a text element's DOM box that overlaps the fractional band. Optional `severity` and `seek`.         |
@@ -1927,12 +1929,29 @@ mismatched encodes. The directory is deleted after a successful render unless
 mp4 and mov only; png-sequence, gif, webm, HDR and shader-transition renders
 keep their existing routes.
 
+By default every frame of every source video is extracted before capture
+starts. With `HF_VIDEO_FRAME_WINDOW=true`, each segment instead extracts only
+the source frames it shows and deletes them when it closes. Things to know
+before switching it on:
+
+- Segment files are deleted as soon as they are joined, unless `--keep-segments`
+  is set. A failure after the join therefore recaptures everything on `--resume`.
+- Only mp4 and mov renders that segment honour the flag. Motion blur, variable
+  frame rate sources and HDR-transformed sources stay fully extracted. The
+  render log says when the flag was declined and how many videos stayed fully
+  extracted.
+- Source-frame disk use is bounded by roughly workers x `HF_SEGMENT_FRAMES`
+  frames, and only for videos that can be windowed.
+- A windowed render skips the extraction cache, so a re-export gets no
+  warm-cache speedup.
+
 | Environment variable           | Default    | Effect                                                                                   |
 | ------------------------------ | ---------- | ------------------------------------------------------------------------------------------ |
 | `HF_SEGMENTED_CAPTURE`         | unset      | `true` segments any eligible render; `false` is the kill switch                          |
 | `HF_SEGMENTED_MIN_SECONDS`     | off        | Segment renders at least this long. Unset means duration never routes on its own          |
 | `HF_SEGMENT_FRAMES`            | `3000`     | Frames per segment (~100 s at 30 fps); minimum 30                                        |
 | `HF_SEGMENT_BROWSER_RECYCLE`   | `3`        | Restart the browser every N segments; `0` keeps one session for the whole render          |
+| `HF_VIDEO_FRAME_WINDOW`        | unset      | `true` extracts each segment's source frames when it starts and deletes them when it closes |
 
 #### Render the same composition with different content
 
@@ -2007,7 +2026,10 @@ default 3); `--json` prints the results as JSON.
 ## Keep the environment healthy
 
 HyperFrames keeps what it downloads and builds (the headless browser, models, optional packages, fonts and project
-history) under `~/.cache/hyperframes`. Set `HYPERFRAMES_CACHE_DIR` to an absolute path to keep it somewhere else.
+history) under `~/.cache/hyperframes`. Set `HYPERFRAMES_CACHE_DIR` to an absolute path to keep it somewhere else;
+background preview records, the registry's manifest cache, the local search model and catalog, and the records of
+what an app already showed then move there too, so a sandbox that only lets the CLI write inside your project can
+run them.
 
 ### `doctor`
 
@@ -2085,6 +2107,9 @@ files, the browser download and models are never touched.
 duration, element counts by type, track count, and total size.
 `npx hyperframes compositions` lists every composition in the project with its
 ID, duration, resolution, and element count. Both take `--json`.
+`npx hyperframes info --media --json` adds `heard`: every clip the render mixes, scenes included, on the film's clock,
+each with `src`, `start`, `end` (where it stops, or where its media runs out if sooner; `0` runs to the media's end),
+`mediaStart`, `playbackRate`, `volume` and `type`.
 
 ### `update`
 
@@ -2513,7 +2538,7 @@ hyperframes auth logout --yes            # no prompt
 | `HYPERFRAMES_API_KEY` | Alias for `HEYGEN_API_KEY`.                      |
 | `HEYGEN_ACCESS_TOKEN` | OAuth token from a host app; used first, never refreshed. |
 | `HEYGEN_API_URL`      | API base URL (default `https://api.heygen.com`). |
-| `HYPERFRAMES_CONFIG_DIR` | Credentials root (default `~/.hyperframes`). |
+| `HYPERFRAMES_CONFIG_DIR` | Settings root: credentials, telemetry and update settings, project links (default `~/.hyperframes`). |
 | `HYPERFRAMES_ENV` | `prod` (default) or `dev`; `dev` uses a separate credential directory. Hosts and the OAuth client id come from `HEYGEN_API_URL` and `HYPERFRAMES_OAUTH_*`. |
 | `HYPERFRAMES_OAUTH_CLIENT_ID` | Override the selected public OAuth client. |
 
@@ -2542,7 +2567,8 @@ video to disk.
 
 The zip excludes root `renders` and `snapshots`, `.git`, `node_modules`, `dist`,
 `.next`, `coverage`, dotfiles, and anything your `.hyperframesignore` rules
-match. Those rules use gitignore syntax and apply to `hyperframes publish` too.
+match. Those rules use gitignore syntax and apply to `hyperframes publish` too, and
+the project lint behind `lint`, `check`, `snapshot` and `render` does not read compositions they match.
 Keep them narrow — a dynamically selected asset may have no static reference to
 protect it.
 

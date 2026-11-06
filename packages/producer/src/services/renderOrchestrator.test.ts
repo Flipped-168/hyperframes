@@ -73,6 +73,7 @@ import {
   createRenderJob,
   RenderQualityError,
 } from "./renderOrchestrator.js";
+import { shouldWindowVideoFrames } from "./render/videoFrameWindow.js";
 import { probeRequiresBrowser } from "./render/stages/probeStage.js";
 import { EncoderInterruptedError } from "./render/encoderInterruption.js";
 import { ensureFrameWritten } from "./render/stages/captureHdrFrameShared.js";
@@ -1325,6 +1326,19 @@ describe("collectVideoMetadataHints", () => {
     ).toEqual([
       { id: "video1", width: 1920, height: 1080 },
       { id: "video2", width: 1080, height: 1920 },
+    ]);
+  });
+
+  it("sizes a phone's portrait clip as it plays, not as it is stored", () => {
+    const stored = { width: 1920, height: 1080, durationSeconds: 3 };
+    expect(
+      collectVideoMetadataHints([
+        { videoId: "portrait", metadata: { ...stored, rotation: -90 } },
+        { videoId: "upside-down", metadata: { ...stored, rotation: 180 } },
+      ]),
+    ).toEqual([
+      { id: "portrait", width: 1080, height: 1920 },
+      { id: "upside-down", width: 1920, height: 1080 },
     ]);
   });
 });
@@ -3584,6 +3598,33 @@ describe("resolveParallelCaptureMode", () => {
     expect(resolveParallelCaptureMode({ ...beginframe, deviceScaleFactor: undefined })).toBe(
       "beginframe",
     );
+  });
+});
+
+describe("shouldWindowVideoFrames", () => {
+  const segmentsAt = (env: Record<string, string | undefined>, outputFormat: string) =>
+    shouldSegmentCapture({
+      env: { HF_SEGMENTED_CAPTURE: "true", ...env },
+      durationSeconds: 900,
+      outputFormat,
+      layeredOrEffectRoute: false,
+      streamingOk: true,
+    });
+  const windows = (env: Record<string, string | undefined>, outputFormat = "mp4") =>
+    shouldWindowVideoFrames({ env, segmented: segmentsAt(env, outputFormat) });
+
+  it("windows only when the flag is true and the render segments", () => {
+    expect(windows({ HF_VIDEO_FRAME_WINDOW: "true" })).toBe(true);
+    expect(windows({ HF_VIDEO_FRAME_WINDOW: " TRUE " }, "mov")).toBe(true);
+    for (const off of ["false", "0", "off", "no", "", "1", "yes", undefined]) {
+      expect(windows({ HF_VIDEO_FRAME_WINDOW: off })).toBe(false);
+    }
+    // Excluded outputs never segment, so the flag has nothing to window.
+    expect(windows({ HF_VIDEO_FRAME_WINDOW: "true" }, "webm")).toBe(false);
+    expect(windows({ HF_VIDEO_FRAME_WINDOW: "true" }, "png-sequence")).toBe(false);
+    expect(
+      shouldWindowVideoFrames({ env: { HF_VIDEO_FRAME_WINDOW: "true" }, segmented: false }),
+    ).toBe(false);
   });
 });
 

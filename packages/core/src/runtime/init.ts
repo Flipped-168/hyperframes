@@ -56,7 +56,9 @@ import { createCssAdapter } from "./adapters/css";
 import {
   createGsapAdapter,
   holdFrameMarks,
+  muteDiscreteCallbacks,
   rerenderGsapTimelineAt,
+  gsapTimelineOf,
   seekGsapTimeline,
   type GsapStructureKey,
 } from "./adapters/gsap";
@@ -498,15 +500,14 @@ const joinsWebAudio = (el: Element): el is HTMLMediaElement =>
       masterChain: readMasterFxChain(el.ownerDocument),
     }));
 const WEB_AUDIO_MEDIA = "audio[data-start], video[data-start]";
-const DECODE_FIRST_MAX_SECONDS = 300;
 
 /** WebKit restarts a media element's audio 150 to 400 ms late; a decoded buffer on the context clock starts on time. */
-function decodesFirst(el: HTMLMediaElement): boolean {
+function decodesFirst(el: HTMLMediaElement, webAudio: WebAudioTransport): boolean {
   return (
     isWebKit() &&
     isAudioElement(el) &&
     !el.loop &&
-    el.duration <= DECODE_FIRST_MAX_SECONDS &&
+    webAudio.fitsDecodeBudget(el) &&
     typeof readElementRateSpec(el) === "number" &&
     readElementPlaybackRate(el) === 1
   );
@@ -1641,9 +1642,6 @@ export function initSandboxRuntimeModular(): void {
 
   // Sub-composition timelines the runtime nested into the root: the host composition id, and where.
   const autoNested = new WeakMap<object, { hostId: string; parent: unknown; at: number }>();
-  // The producer's GSAP stub registers stand-ins; GSAP's tree holds the timelines behind them.
-  const gsapTimelineOf = (timeline: object): object =>
-    (timeline as { __hfReal?: object }).__hfReal ?? timeline;
   // The composite that holds the children of a root with no timeline, and how many it holds.
   let missingRootComposite: { timeline: RuntimeTimelineLike; size: number } | null = null;
   // Roots the runtime built. One it no longer holds would stay on GSAP's global timeline with all it last held.
@@ -2940,7 +2938,6 @@ export function initSandboxRuntimeModular(): void {
         currentTime: time,
         compositionDuration,
         canonicalFps: state.canonicalFps,
-        exportRenderSeek: Boolean(window.__HF_EXPORT_RENDER_SEEK_CONFIG),
         timelineRegistry: window.__timelines ?? {},
         resolver: timingResolverFor(true),
       });
@@ -4145,6 +4142,11 @@ export function initSandboxRuntimeModular(): void {
             seekRootChildrenAndAdapters(state.capturedTimeline, t, { suppressEvents: true }),
           );
       },
+      muteCallbacks: () =>
+        muteDiscreteCallbacks([
+          ...sceneTimelines().map(([, timeline]) => timeline),
+          ...(state.capturedTimeline ? [state.capturedTimeline] : []),
+        ]),
       ignoreMutations: withoutOwnCompositionRecords,
     });
   }
@@ -5090,7 +5092,6 @@ export function initSandboxRuntimeModular(): void {
       duration: (element) => resolveDurationForElement(element),
       compositionDuration: () => getSafeTimelineDurationSeconds(state.capturedTimeline, 0),
       canonicalFps: () => state.canonicalFps,
-      exportRenderSeek: () => Boolean(window.__HF_EXPORT_RENDER_SEEK_CONFIG),
     }),
     createWaapiAdapter(),
     createCssAdapter({
@@ -6142,7 +6143,7 @@ export function initSandboxRuntimeModular(): void {
           : Promise.resolve(null);
       void capture.then((scheduled) => {
         const replacedByNewerPass = gen !== webAudio.currentGeneration();
-        if (scheduled && state.playbackRate === 1 && decodesFirst(rawEl)) {
+        if (scheduled && state.playbackRate === 1 && decodesFirst(rawEl, webAudio)) {
           void webAudio.decodeAudioElement(rawEl).then(async (buffer) => {
             if (!buffer || !clock.isPlaying() || gen !== webAudio.currentGeneration()) return;
             const played = await webAudio.schedulePlayback(
