@@ -39,6 +39,7 @@ import { createPreviewSeek } from "./previewSeek";
 import { createPausedVideoFrames, releasePausedVideoFrame } from "./pausedVideoFrames";
 import { copiesReady } from "./previewCopies";
 import { installRuntimeControlBridge, postRuntimeMessage, setRuntimeProtocolFps } from "./bridge";
+import { installEditingAgent } from "./editingAgent";
 import { instantTolerance } from "../clipFacts";
 import { isClipVisibleAt, isInClipWindow } from "./clipWindow";
 import { isWebKit, mediaElementTime } from "./mediaClock";
@@ -116,6 +117,7 @@ import {
   MEDIA_PRESEEK_SECONDS,
   type RuntimeMediaClip,
 } from "./media";
+import { PREVIEW_QUALITY_LEVELS, type PreviewQuality } from "../previewProxyBox";
 import {
   handleErrorForProxy,
   handleMetadataForProxy,
@@ -187,8 +189,10 @@ import { watchSceneWebglContexts } from "./webglContextRecovery";
 import {
   captureMotionBlurBusy,
   initCaptureMotionBlur,
+  motionBlurLighterLevels,
   paintCaptureMotionBlur,
   releaseCaptureMotionBlurFrame,
+  setMotionBlurPreviewQuality,
 } from "./captureMotionBlur";
 import { TransportClock } from "./clock";
 import { WebAudioTransport } from "./webAudioTransport";
@@ -321,6 +325,13 @@ function resolveExportRenderFps(): ExportRenderFpsResolution {
     rawFps,
     fallbackReason: config.fpsFallbackReason,
   };
+}
+
+/** Levels below Full that make the preview lighter: a heavy video's copy, or blur's fewer copies. */
+function lighterLevels(): PreviewQuality[] {
+  const videos = levelsWithLighterCopies();
+  const blur = motionBlurLighterLevels();
+  return PREVIEW_QUALITY_LEVELS.filter((level) => videos.includes(level) || blur.includes(level));
 }
 
 function compositionFps(): number | null {
@@ -6686,11 +6697,14 @@ export function initSandboxRuntimeModular(): void {
           mountedElementCount: document.body.querySelectorAll("*").length,
           durationSeconds: clock.getDuration(),
           videos: describeVideoSources(),
-          lighterAt: levelsWithLighterCopies(),
+          lighterAt: lighterLevels(),
           copiesReady: copiesReady(),
         },
       }),
-    onSetPreviewQuality: setPreviewQuality,
+    onSetPreviewQuality: (level) => {
+      setPreviewQuality(level);
+      setMotionBlurPreviewQuality(level);
+    },
     onSetCopiesAhead: (on) => setCopiesAhead(on, () => clock.isPlaying()),
     onRetryPreviewCopies: retryPreviewCopies,
     onSetIdleHeartbeat: (slow) => {
@@ -6743,6 +6757,7 @@ export function initSandboxRuntimeModular(): void {
     onClearRuntimeData: clearRuntimeData,
     getCanonicalFps: () => state.canonicalFps,
   });
+  runtimeCleanupCallbacks.push(installEditingAgent().dispose);
 
   const teardown = () => {
     if (state.tornDown) return;

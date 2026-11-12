@@ -21,7 +21,7 @@
   },
   "@hyperframes/inspector": {
     "packed": 858046,
-    "unpacked": 3684092
+    "unpacked": 3722000
   },
   "@hyperframes/lint": {
     "packed": 191022,
@@ -36,8 +36,8 @@
     "unpacked": 541601
   },
   "@hyperframes/producer": {
-    "packed": 870000,
-    "unpacked": 3165274
+    "packed": 880000,
+    "unpacked": 3210000
   },
   "@hyperframes/sdk": {
     "packed": 90662,
@@ -56,7 +56,7 @@
     "unpacked": 26703858
   },
   "@hyperframes/studio-server": {
-    "packed": 164800,
+    "packed": 168500,
     "unpacked": 646000
   }
 }

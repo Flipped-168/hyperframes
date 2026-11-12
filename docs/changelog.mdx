@@ -9,6 +9,131 @@ Recent HyperFrames releases, including user-facing features, fixes, and migratio
 {/* New release entries are prepended by `bun run changelog:draft <version> --write`. */}
 
 <Update
+  label="HyperFrames v0.9.38"
+  description="Released - 2026-11-12"
+  tags={["Release", "Scripts", "Studio", "Lint"]}
+>
+The Volume control in Studio now changes the whole clip, a paused video shows the same colors as the playing one on Mac, and edit history records which layer each edit touched. Publish also keeps Library files out for projects on cloud drives, and render servers only load assets from inside the project.
+
+## Features
+
+- **Studio:** Record the layer name on each history entry's target ([4fad43db2](https://github.com/heygen-com/hyperframes/commit/4fad43db2010d61002cc9f9296f3c5f8bf2d4210), [#7586](https://github.com/heygen-com/hyperframes/pull/7586)).
+- **CLI:** Heygen generate defaults images to nano-banana-2.1 ([fc7cb1aad](https://github.com/heygen-com/hyperframes/commit/fc7cb1aad8d5f01361343d004de1ee7b8143ed20), [#7591](https://github.com/heygen-com/hyperframes/pull/7591)).
+- **CLI:** Price and validate minimax-h3-image, and image models at 1.5x ([88e74e088](https://github.com/heygen-com/hyperframes/commit/88e74e088fef82e3dba1f2972e7292e28eab137d), [#7589](https://github.com/heygen-com/hyperframes/pull/7589)).
+
+## Fixes
+
+- **Scripts:** Release:prepare refuses a baseline that skips a release whose tag this clone lacks ([f3626e97c](https://github.com/heygen-com/hyperframes/commit/f3626e97c34f18412a089d79a027bd126d8d4dbc)).
+- **Studio:** A preview reload survives its pane unmounting mid-load ([5a3e46235](https://github.com/heygen-com/hyperframes/commit/5a3e46235fe1f749006af6bacae01c684f2866ca), [#7590](https://github.com/heygen-com/hyperframes/pull/7590)).
+- **Core:** Show a paused video frame with the same color as the playing video on Mac ([303a4c477](https://github.com/heygen-com/hyperframes/commit/303a4c47710a90876e788e47e0fb68615302d12c), [#7584](https://github.com/heygen-com/hyperframes/pull/7584)).
+- **Studio:** The Volume control changes the whole clip, fades included ([245904d55](https://github.com/heygen-com/hyperframes/commit/245904d55a916d5dc6b186dd90790c6e10a74c13), [#7587](https://github.com/heygen-com/hyperframes/pull/7587)).
+- **CLI:** Publish keeps Library files out for projects on cloud drives ([f7bf5f0c4](https://github.com/heygen-com/hyperframes/commit/f7bf5f0c423565325eb4afea137d629894351d53), [#7582](https://github.com/heygen-com/hyperframes/pull/7582)).
+- **Producer:** Render servers only load assets from inside the project ([03ddfb189](https://github.com/heygen-com/hyperframes/commit/03ddfb189f612a733ea37b7d6e907ef9eb7c089c), [#7579](https://github.com/heygen-com/hyperframes/pull/7579)).
+
+## Performance
+
+- **Lint:** Parse each style block once per lint instead of once per rule ([32cacab74](https://github.com/heygen-com/hyperframes/commit/32cacab74bb52076efb9e84258f382200b56b19e), [#7593](https://github.com/heygen-com/hyperframes/pull/7593)).
+
+## Docs & Examples
+
+- **Skills:** Name the model next to each media-use image price ([748bfe3b2](https://github.com/heygen-com/hyperframes/commit/748bfe3b2beef424c289dd12cc146b8dfcfa019c), [#7592](https://github.com/heygen-com/hyperframes/pull/7592)).
+- Every link to hyperframes.studio carries where the visit began, shared with the homepage ([6b602495d](https://github.com/heygen-com/hyperframes/commit/6b602495db862ce60c07aa5d68155c4d2e62dfc6), [#7580](https://github.com/heygen-com/hyperframes/pull/7580)).
+
+[View the full commit range](https://github.com/heygen-com/hyperframes/compare/v0.9.37...v0.9.38).
+</Update>
+
+<Update
+  label="HyperFrames v0.9.37"
+  description="Released - 2026-11-12"
+  tags={["Release", "CLI", "Share"]}
+>
+Sharing refuses to build an archive when it can't read `.hyperframesignore`, so ignored files stay out. `templates pull` also refuses archives that hold links.
+
+## Fixes
+
+- **CLI:** `hyperframes templates pull` refuses an archive that holds anything other than plain files and folders, such as a symlink, hard link or device entry. Nothing is unpacked, and no partial folder is left behind. A link inside a pulled template could otherwise let preview, render and publish reach files elsewhere on your machine ([ab66e5bd7](https://github.com/heygen-com/hyperframes/commit/ab66e5bd72ad16b36a37dd1ee50d23cc21b41bb0), [#7576](https://github.com/heygen-com/hyperframes/pull/7576)).
+- **Share:** `snapshotProject` and `snapshotFiles` throw `invalid_source_ignore` again when `.hyperframesignore` can't be read. In 0.9.35 they skipped the unreadable file, so an archive built from the snapshot could include files the ignore file meant to leave out. Hosts that use these functions only for change detection should pass `{ lenientIgnore: true }` to keep the 0.9.35 behavior. `projectFingerprint` already does ([35cf03cab](https://github.com/heygen-com/hyperframes/commit/35cf03cab9e75a4f21fc90cf0dac8a08310ab6ad), [#7573](https://github.com/heygen-com/hyperframes/pull/7573)).
+
+[View the full commit range](https://github.com/heygen-com/hyperframes/compare/v0.9.36...v0.9.37).
+</Update>
+
+<Update
+  label="HyperFrames v0.9.36"
+  description="Released - 2026-11-11"
+  tags={["Release", "Lint", "Core"]}
+>
+Motion blur previews more smoothly when you lower preview quality. Renders still draw full-quality blur.
+
+## Features
+
+- **Core:** Lowering preview quality now makes motion blur lighter too. The preview draws 16 blur copies at 1/2 and 8 at 1/4 and below, instead of 32. Renders always draw 32. A host that lowers quality on choppy playback can now do so for a film slowed only by blur ([6cc734fd2](https://github.com/heygen-com/hyperframes/commit/6cc734fd24e25c09e28824b5543fa4f85612f02c), [#7547](https://github.com/heygen-com/hyperframes/pull/7547)).
+
+## Fixes
+
+- **Lint:** Don't look for audio on another computer's share ([7ba8f8507](https://github.com/heygen-com/hyperframes/commit/7ba8f8507545edb75f5b89d14c9727da667a3cb0), [#7572](https://github.com/heygen-com/hyperframes/pull/7572)).
+
+[View the full commit range](https://github.com/heygen-com/hyperframes/compare/v0.9.35...v0.9.36).
+</Update>
+
+<Update
+  label="HyperFrames v0.9.35"
+  description="Released - 2026-11-11"
+  tags={["Release", "Security", "Share", "CLI", "Studio App"]}
+>
+Private files like `.env` and git data stay out of preview bundles, and local sharing only answers your own machine. Sharing also keeps tracking changes when `.hyperframesignore` uses gitignore patterns.
+
+## Fixes
+
+- **Security:** Preview bundles never include `.env` files or git data, even through a link. A render that names one of these files now stops with an error. Local sharing only answers this machine, so sharing from Studio in a container now gets a 403 ([a243169f8](https://github.com/heygen-com/hyperframes/commit/a243169f8a10fa26fe9e9d1d1623d68445e2a3c7), [#7563](https://github.com/heygen-com/hyperframes/pull/7563)).
+- **Security:** Helper programs are found by walking your trusted `PATH` folders directly. On Windows, the working folder is never searched ([9a048ac01](https://github.com/heygen-com/hyperframes/commit/9a048ac019e919f9e9c37b1b764172676434511e), [#7562](https://github.com/heygen-com/hyperframes/pull/7562)).
+- **Share:** Change detection keeps working when `.hyperframesignore` uses gitignore patterns such as `/exports/` or `**/*.mov`. Before, those patterns stopped it with an error ([c07468d6a](https://github.com/heygen-com/hyperframes/commit/c07468d6a7155d28828eef1058896b7aa74114a1), [#7568](https://github.com/heygen-com/hyperframes/pull/7568)).
+- **CLI:** Durations and sizes roll over to the next unit when rounded, so you see `1m 0.0s` and `1.0 MB`, not `60.0s` and `1024.0 KB` ([182608311](https://github.com/heygen-com/hyperframes/commit/182608311ad9781669b26288a944cc85f28ab1cd), [#7565](https://github.com/heygen-com/hyperframes/pull/7565)).
+
+## Docs & Examples
+
+- **Studio App:** The brand kits page says kits are shared with your workspace only ([c218b37a3](https://github.com/heygen-com/hyperframes/commit/c218b37a319661280f337a3304bb7a4f566bddf5), [#7570](https://github.com/heygen-com/hyperframes/pull/7570)).
+
+## Internal
+
+- **Core:** The preview runtime offers its parent a typed message port. This prepares Studio for a sealed preview frame and changes nothing yet ([ef5cdeb0a](https://github.com/heygen-com/hyperframes/commit/ef5cdeb0a02afc993980809cc359dd68a1c4944d), [#7556](https://github.com/heygen-com/hyperframes/pull/7556)).
+- **CLI:** Local Studio's share window counts button clicks and choices. Only fixed categories are recorded, never links, paths or email addresses ([2a70733c1](https://github.com/heygen-com/hyperframes/commit/2a70733c15798430e1fae817bc65f1bf90acbed6), [#7566](https://github.com/heygen-com/hyperframes/pull/7566)).
+
+[View the full commit range](https://github.com/heygen-com/hyperframes/compare/v0.9.34...v0.9.35).
+</Update>
+
+<Update
+  label="HyperFrames v0.9.34"
+  description="Released - 2026-11-11"
+  tags={["Release", "Studio Server", "Skills", "CLI"]}
+>
+HyperFrames now runs helper programs like FFmpeg only from where they are installed, never from a project folder. Renders can also refuse variables a page does not declare, when that check is turned on.
+
+## Features
+
+- **Producer:** With strict variables turned on, a render fails when it is given a variable the page does not declare. It is off by default, so renders are unchanged ([f312fca7e](https://github.com/heygen-com/hyperframes/commit/f312fca7e2098524af07055bdf6c20a3706d6f89), [#7548](https://github.com/heygen-com/hyperframes/pull/7548)).
+
+## Fixes
+
+- **Studio Server:** Load fonts and modules only in the Studio's own preview frames ([ffb13c3b6](https://github.com/heygen-com/hyperframes/commit/ffb13c3b62a1b8ed98fdcd835f15412d0a7ca7e6), [#7553](https://github.com/heygen-com/hyperframes/pull/7553)).
+- **Skills:** Plugin launcher and media helpers run the pinned CLI, not a project copy ([a8fe3a5b6](https://github.com/heygen-com/hyperframes/commit/a8fe3a5b6844c9f1ae1a4473793eeb11dfcec627), [#7552](https://github.com/heygen-com/hyperframes/pull/7552)).
+- **CLI:** Preview uses the bundled Studio unless local Studio mode is opted in ([668983e1a](https://github.com/heygen-com/hyperframes/commit/668983e1a63efb7618049c73cf9dcad2a5977a4e), [#7551](https://github.com/heygen-com/hyperframes/pull/7551)).
+- **Security:** FFmpeg, FFprobe and other helper programs are taken only from where they are installed or a path you set, never from a project folder ([84799bdc5](https://github.com/heygen-com/hyperframes/commit/84799bdc59b18f6a3df6595d8a8d1ec03dfde673), [#7524](https://github.com/heygen-com/hyperframes/pull/7524)).
+- **Core:** Saving a file works on drives that refuse hard links with a permission error ([f36463e29](https://github.com/heygen-com/hyperframes/commit/f36463e292f4487daef522ec9b19c2dacceb6adb), [#7474](https://github.com/heygen-com/hyperframes/pull/7474)).
+- **Studio:** Thumbnails are captured in a sealed page, and shader transitions still work where the browser blocks local storage ([80cda85d7](https://github.com/heygen-com/hyperframes/commit/80cda85d761128e121a1cef0f1378ad342472411), [#7528](https://github.com/heygen-com/hyperframes/pull/7528)).
+
+## Catalog
+
+- **CLI:** Refuse more coding-agent instruction files in registry installs ([9bab57ab4](https://github.com/heygen-com/hyperframes/commit/9bab57ab48db70f3aee3376f6bb86af5f7c50583), [#7549](https://github.com/heygen-com/hyperframes/pull/7549)).
+- **CLI and Studio:** Registry installs and Studio file writes stay inside the project content folders ([b96c82b78](https://github.com/heygen-com/hyperframes/commit/b96c82b785ab8fbd9c030c093de9c39e5dc39342), [#7523](https://github.com/heygen-com/hyperframes/pull/7523)).
+
+## Internal
+
+- **Engine:** The URL-read concurrency test passes on machines with 32 or more cores ([3ad7611f9](https://github.com/heygen-com/hyperframes/commit/3ad7611f9fd36c1cef589c59b116ad7043c3b041), [#7544](https://github.com/heygen-com/hyperframes/pull/7544)).
+
+[View the full commit range](https://github.com/heygen-com/hyperframes/compare/v0.9.33...v0.9.34).
+</Update>
+
+<Update
   label="HyperFrames v0.9.33"
   description="Released - 2026-11-11"
   tags={["Release", "Engine", "Share", "Parsers,lint,producer,cli"]}

@@ -1065,8 +1065,11 @@ sub-compositions refresh live. Preview and render share the same runtime.
 
 The server picks one of three modes by itself: **embedded** (the default for
 `npx` — Studio bundled in the CLI, no extra dependencies), **local studio**
-(Vite with full HMR, when `@hyperframes/studio` is in your `node_modules`), or
-**monorepo** (the studio dev server, when you run from the source repo).
+(Vite with full HMR, from a `@hyperframes/studio` source checkout), or
+**monorepo** (the studio dev server, when you run from the source repo). Local
+studio mode runs only when the project resolves to the same Studio checkout as
+the CLI itself, or when you set `HYPERFRAMES_LOCAL_STUDIO=1`; a Studio in the
+project's own `node_modules` is not used otherwise.
 `--background` works with the embedded server only.
 
 The CLI ships GSAP, CustomEase, and MotionPathPlugin, so the GSAP scripts
@@ -2328,6 +2331,14 @@ values are never collected, except short self-identifying names: `AGENT`,
 `AI_AGENT` and `TERM_PROGRAM` (filtered to short slugs), and `HYPERFRAMES_CLIENT`,
 the `<app>/<version>/<channel>` tag an app that launches the CLI sets, sent as
 `client` so reports from that app can be told apart.
+
+Local Studio sharing also records upgrade clicks (project limit or sharing permissions),
+audience selections, editable-source toggles, and sharing action/navigation intent.
+These events contain fixed categories and booleans, never share URLs, project paths,
+or invitee addresses. The local Studio's and `hyperframes share`'s Upgrade to Pro links add
+`?entry=local_studio_share` or `?from=cli&entry=cli_share`, so the pricing page can tell which
+link a visit came from. A click records intent, not a successful permission change or purchase.
+They follow the same telemetry opt-outs.
 
 Nothing personally identifying is collected until you sign in. **Signed-in usage
 is not anonymous.** When you run `hyperframes auth login`, your usage is linked
