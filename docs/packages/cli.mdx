@@ -1894,6 +1894,23 @@ Low-memory detection reads **host** RAM, not cgroup or container limits, so
 containerised callers — including `--docker` — should set
 `PRODUCER_LOW_MEMORY_MODE` explicitly.
 
+Render Chrome keeps its sandbox on macOS, on Windows, and on Linux for a
+non-root user outside a container. It runs without one as root, in Docker,
+Podman or Kubernetes, on AWS Lambda and Cloud Run, and where Linux restricts
+unprivileged user namespaces (Ubuntu 23.10 and later). If a sandboxed Linux
+launch still fails, the render prints a warning and continues without the
+sandbox. Set `HYPERFRAMES_CHROME_SANDBOX=0` to always run without it, or `1` to
+require it: with `1`, a launch Chrome refuses fails instead of falling back.
+
+Chrome starts with only the environment variables it uses: the system path,
+home and temp dirs, locale and time zone, display and session bus, fonts,
+`LD_LIBRARY_PATH`, GPU driver settings (Mesa, Vulkan, NVIDIA), proxies and CA
+bundles, and the Windows and macOS system variables. Other variables, such as
+cloud credentials and API keys, stay with the CLI. If your Chrome needs a
+variable that is not passed through, list its name in
+`HYPERFRAMES_CHROME_ENV_PASSTHROUGH`, separated by commas, for example
+`HYPERFRAMES_CHROME_ENV_PASSTHROUGH=KRB5CCNAME,RADV_PERFTEST`.
+
 #### When a render times out
 
 Three separate budgets can expire, and the error message tells you which. All
@@ -2655,6 +2672,20 @@ stops before uploading it and names the largest files left. Use `--dry-run`
 first to see which media would upload and the compressed size, without
 authenticating, uploading, or starting anything. If you are over, add only
 paths you have verified are unneeded to `.hyperframesignore`.
+
+A file outside the project folder that a composition points at is copied into
+the zip only if it is an image, video, audio, font, CSS or JS file, judged by
+its extension. Any other outside file (a Lottie `.json`, a `.pdf`, a file with
+no extension), one in a private location (env files, Git data, hidden, system
+and app-data folders), and one reached from a file that came in with an
+imported project are left out, with a warning naming each. To include such a
+file, move it into the project folder. Under `--json`, the result lists those
+as `left_out`, each with the `file` that points at it, the `reference` as
+written, its `path` from the project folder, the `reason` (`blocklisted`,
+`received` or `file_type`) and `levels_up`, how many folders above the project
+it is. A full run also prints each as a `{"event":"left_out",…}`
+line on stderr, so a wrapper can ask with `--dry-run --json` before uploading
+and still hear about each one during the run.
 
 Render parameters mirror local `hyperframes render` where they overlap:
 

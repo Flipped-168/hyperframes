@@ -48,14 +48,34 @@ describe("installEditingAgent", () => {
     return (handoff.mock.calls[0][2] as MessagePort[])[0];
   };
 
-  it("hands one port to the parent, once", () => {
-    post(parent, CONNECT);
+  it("hands a port to the parent on its connect", () => {
     post(parent, CONNECT);
     expect(handoff).toHaveBeenCalledOnce();
     const [message, targetOrigin, transfer] = handoff.mock.calls[0];
     expect(message).toEqual({ source: "hf-preview", type: "editing-port", v: 1 });
     expect(targetOrigin).toBe("*");
     expect(transfer).toHaveLength(1);
+  });
+
+  it("hands a fresh port to each later connect from the parent and keeps the earlier one working", async () => {
+    const old = connectedPort();
+    post(parent, CONNECT);
+    expect(handoff).toHaveBeenCalledTimes(2);
+    const fresh = (handoff.mock.calls[1][2] as MessagePort[])[0];
+    expect(fresh).not.toBe(old);
+    expect(await ask(old, { v: 1, id: 1, kind: "hello" })).toMatchObject({ id: 1, ok: true });
+    expect(await ask(fresh, { v: 1, id: 2, kind: "hello" })).toMatchObject({ id: 2, ok: true });
+  });
+
+  it("closes every port it handed over when disposed", async () => {
+    const first = connectedPort();
+    post(parent, CONNECT);
+    const second = (handoff.mock.calls[1][2] as MessagePort[])[0];
+    const closed = [first, second].map(
+      (port) => new Promise<void>((resolve) => port.addEventListener("close", () => resolve())),
+    );
+    agent.dispose();
+    await Promise.all(closed);
   });
 
   it("ignores a connect from the page itself or another frame, without using up the handoff", () => {
@@ -67,6 +87,14 @@ describe("installEditingAgent", () => {
     expect(handoff).not.toHaveBeenCalled();
     post(parent, CONNECT);
     expect(handoff).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the parent's port when another frame asks after it", async () => {
+    const port = connectedPort();
+    post(frameWindow(), CONNECT);
+    post(window, CONNECT);
+    expect(handoff).toHaveBeenCalledOnce();
+    expect(await ask(port, { v: 1, id: 1, kind: "hello" })).toMatchObject({ id: 1, ok: true });
   });
 
   it("never hands off on a top-level page, where the page is its own parent", () => {
@@ -107,7 +135,20 @@ describe("installEditingAgent", () => {
       ok: true,
       result: {
         version: 1,
-        kinds: ["hello", "runtime-snapshot", "wait-for-seek", "set-loop-start"],
+        kinds: [
+          "hello",
+          "runtime-snapshot",
+          "wait-for-seek",
+          "set-loop-start",
+          "computed-styles",
+          "elements-at-point",
+          "pointer-targets",
+          "describe",
+          "ancestors",
+          "query",
+          "geometry",
+          "layers",
+        ],
       },
     });
     expect((await ask(port, { v: 1, id: 2, kind: "runtime-snapshot", params: {} })).result).toEqual(
@@ -147,12 +188,198 @@ describe("installEditingAgent", () => {
       15,
       "invalid-params",
     ],
+    [{ v: 1, id: 16, kind: "computed-styles", params: { selector: "p" } }, 16, "invalid-params"],
+    [
+      { v: 1, id: 17, kind: "computed-styles", params: { selector: "", properties: [] } },
+      17,
+      "invalid-params",
+    ],
+    [
+      { v: 1, id: 18, kind: "computed-styles", params: { selector: "p", properties: ["color;"] } },
+      18,
+      "invalid-params",
+    ],
+    [
+      { v: 1, id: 19, kind: "computed-styles", params: { selector: "p", properties: [1] } },
+      19,
+      "invalid-params",
+    ],
+    [
+      {
+        v: 1,
+        id: 20,
+        kind: "computed-styles",
+        params: { selector: "p", properties: Array(65).fill("color") },
+      },
+      20,
+      "invalid-params",
+    ],
+    [
+      {
+        v: 1,
+        id: 21,
+        kind: "computed-styles",
+        params: { selector: "p".repeat(2001), properties: ["color"] },
+      },
+      21,
+      "invalid-params",
+    ],
+    [
+      {
+        v: 1,
+        id: 22,
+        kind: "computed-styles",
+        params: { selector: "p", properties: ["color"], extra: 1 },
+      },
+      22,
+      "invalid-params",
+    ],
+    ...[
+      { y: 1 },
+      { x: 1, y: Number.NaN },
+      { x: "1", y: 1 },
+      { x: 1, y: Infinity },
+      { x: 1, y: 2, z: 3 },
+    ].flatMap((params, index) =>
+      (["elements-at-point", "pointer-targets"] as const).map((kind, k) => [
+        { v: 1, id: 30 + index * 2 + k, kind, params },
+        30 + index * 2 + k,
+        "invalid-params",
+      ]),
+    ),
+    ...[
+      {},
+      { handles: [] },
+      { handles: [1] },
+      { handles: ["1"] },
+      { handles: ["0123456789abcdef"] },
+      { handles: ["0123456789abcdef:0"] },
+      { handles: ["0123456789abcdef:01"] },
+      { handles: ["0123456789ABCDEF:1"] },
+      { handles: ["0123456789abcde:1"] },
+      { handles: ["0123456789abcdef:1 "] },
+      { handles: [`0123456789abcdef:${"9".repeat(16)}`] },
+      { handles: Array(257).fill("0123456789abcdef:1") },
+      { handles: ["0123456789abcdef:1"], extra: 1 },
+      { handles: { 0: "0123456789abcdef:1", length: 1 } },
+    ].map((params, index) => [
+      { v: 1, id: 40 + index, kind: "describe", params },
+      40 + index,
+      "invalid-params",
+    ]),
+    ...[
+      { handle: "0123456789abcdef:1" },
+      { handle: "1", properties: ["color"] },
+      { handle: 1, properties: ["color"] },
+      { handle: "0123456789abcdef:1", selector: "p", properties: ["color"] },
+      { handle: "0123456789abcdef:1", properties: ["color;"] },
+    ].map((params, index) => [
+      { v: 1, id: 70 + index, kind: "computed-styles", params },
+      70 + index,
+      "invalid-params",
+    ]),
+    ...[
+      {},
+      { handles: [] },
+      { handles: ["1"] },
+      { handles: Array(257).fill("0123456789abcdef:1") },
+    ].map((params, index) => [
+      { v: 1, id: 80 + index, kind: "ancestors", params },
+      80 + index,
+      "invalid-params",
+    ]),
+    ...[
+      {},
+      { selector: "" },
+      { selector: 1 },
+      { selector: "p".repeat(2001) },
+      { selector: "p", x: 1 },
+    ].map((params, index) => [
+      { v: 1, id: 90 + index, kind: "query", params },
+      90 + index,
+      "invalid-params",
+    ]),
+    ...[
+      {},
+      { handles: [] },
+      { handles: ["1"] },
+      { handles: [1] },
+      { handles: Array(257).fill("0123456789abcdef:1") },
+      { handles: ["0123456789abcdef:1"], extra: 1 },
+      { children: "0123456789abcdef:1" },
+      { handles: ["0123456789abcdef:1"], children: undefined },
+      { handles: ["0123456789abcdef:1"], children: null },
+      { handles: ["0123456789abcdef:1"], children: true },
+      { handles: ["0123456789abcdef:1"], children: ["0123456789abcdef:1"] },
+      { handles: ["0123456789abcdef:1"], children: "0123456789abcdef:0" },
+    ].map((params, index) => [
+      { v: 1, id: 100 + index, kind: "geometry", params },
+      100 + index,
+      "invalid-params",
+    ]),
+    ...[
+      { group: null },
+      { group: "0123456789abcdef:0" },
+      { group: ["0123456789abcdef:1"] },
+      { group: "0123456789abcdef:1", max: 5 },
+      { scope: "0123456789abcdef:1" },
+      { offset: -1 },
+      { offset: 1.5 },
+      { offset: "2" },
+    ].map((params, index) => [
+      { v: 1, id: 130 + index, kind: "layers", params },
+      130 + index,
+      "invalid-params",
+    ]),
+    ...[["--"], ["--a b"], ["--a;b"], ["--a:b"], ["Color"], ["-x"], ["--" + "a".repeat(255)]].map(
+      (properties, index) => [
+        { v: 1, id: 60 + index, kind: "computed-styles", params: { selector: "p", properties } },
+        60 + index,
+        "invalid-params",
+      ],
+    ),
   ])("rejects %j with a typed error", async (request, id, code) => {
     const setLoopStart = vi.fn();
     window.__hf = { setLoopStart };
     const reply = await ask(connectedPort(), request);
     expect(reply).toMatchObject({ v: 1, id, ok: false, error: { code } });
     expect(setLoopStart).not.toHaveBeenCalled();
+  });
+
+  it("answers computed styles for the element a selector names", async () => {
+    document.body.innerHTML = `<p id="title" style="color: rgb(1, 2, 3); opacity: 0.5">Hi</p>
+      <canvas data-hf-preview-video-canvas style="opacity: 0.25"></canvas>
+      <video id="clip" data-hf-preview-video-frame style="opacity: 0"></video>`;
+    const port = connectedPort();
+    const ask_ = (id: number, selector: string, properties: string[]) =>
+      ask(port, { v: 1, id, kind: "computed-styles", params: { selector, properties } });
+
+    expect((await ask_(1, "#title", ["color", "opacity", "--unset"])).result).toEqual({
+      styles: { color: "rgb(1, 2, 3)", opacity: "0.5" },
+    });
+    // A paused video's canvas carries its authored opacity.
+    expect((await ask_(2, "#clip", ["opacity"])).result).toEqual({ styles: { opacity: "0.25" } });
+    expect((await ask_(3, "#missing", ["color"])).result).toEqual({ styles: null });
+    expect(await ask_(4, "p[", ["color"])).toMatchObject({
+      id: 4,
+      ok: false,
+      error: { code: "failed" },
+    });
+  });
+
+  it("reads custom properties whose names use any case or an underscore", async () => {
+    document.body.innerHTML = `<p id="title" style="--Brand_Color: red; --x2: 4px">Hi</p>`;
+    const properties = ["--Brand_Color", "--x2", "--é"];
+    const reply = await ask(connectedPort(), {
+      v: 1,
+      id: 1,
+      kind: "computed-styles",
+      params: { selector: "#title", properties },
+    });
+    expect(reply).toMatchObject({ ok: true });
+    expect(Object.keys((reply.result as { styles: object }).styles)).toEqual(
+      expect.arrayContaining(["--Brand_Color", "--x2"]),
+    );
   });
 
   it("replies failed when a handler rejects or its result cannot be cloned", async () => {
