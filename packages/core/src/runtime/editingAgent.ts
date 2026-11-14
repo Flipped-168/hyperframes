@@ -30,6 +30,8 @@ import {
 import { elementGeometry } from "./editingGeometry";
 import { pointerTargetsAt } from "./editingTargets";
 import { layersOf } from "./editingLayers";
+import { drawDrafts } from "./editingDraft";
+import { gestureStart } from "./editingGestureStart";
 import { getLogicalOpacity } from "../studioPreviewMark";
 
 type Handlers = {
@@ -89,6 +91,8 @@ const HANDLERS: Handlers = {
   query: ({ selector }) => queryElements(selector),
   geometry: ({ handles, children }) => elementGeometry(handles, children),
   layers: ({ group, offset }) => layersOf(group, offset),
+  draft: ({ drafts }) => drawDrafts(drafts),
+  "gesture-start": ({ handles }) => gestureStart(handles),
 };
 
 function serve(port: MessagePort): void {

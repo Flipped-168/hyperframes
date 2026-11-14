@@ -9,6 +9,101 @@ Recent HyperFrames releases, including user-facing features, fixes, and migratio
 {/* New release entries are prepended by `bun run changelog:draft <version> --write`. */}
 
 <Update
+  label="HyperFrames v0.9.44"
+  description="Released - 2026-11-14"
+  tags={["Release", "Studio", "CLI", "Core"]}
+>
+Check now warns when text leaves the safe areas of a 9:16 social video. Previews free a clip's decoder once the playhead leaves it, and a cancelled audio fade no longer crashes the page. Set HYPERFRAMES_OWNER to tell which run started a leftover browser.
+
+## Features
+
+- **CLI:** Name a caller's owner id on the browsers and warm check it starts ([798c241e4d0cf](https://github.com/heygen-com/hyperframes/commit/798c241e4d0cf18fc328d90c41823a766a9d8d8e), [#7687](https://github.com/heygen-com/hyperframes/pull/7687)).
+- **CLI:** Check warns when text leaves the 9:16 social safe areas ([45882027bd284](https://github.com/heygen-com/hyperframes/commit/45882027bd284a8fbd96ffe854184104304c224f), [#7680](https://github.com/heygen-com/hyperframes/pull/7680)).
+
+## Fixes
+
+- **Studio:** Edit clips added to a project outside Studio ([cb072eb047efa](https://github.com/heygen-com/hyperframes/commit/cb072eb047efafe9749ae81613ccbb8036be3e21), [#7686](https://github.com/heygen-com/hyperframes/pull/7686)).
+- **Core:** Stop a cancelled audio envelope from crashing the page ([49623307ce86c](https://github.com/heygen-com/hyperframes/commit/49623307ce86c030f8016c3e21b6aa1120806d5c), [#7682](https://github.com/heygen-com/hyperframes/pull/7682)).
+- **Core:** Free a preview clip's decoder when the playhead leaves it ([f7b49f12078e1](https://github.com/heygen-com/hyperframes/commit/f7b49f12078e14cdc401808edd4f217df8d24ce4), [#7679](https://github.com/heygen-com/hyperframes/pull/7679)).
+
+## Performance
+
+- **Core:** A reloaded preview video resyncs only itself ([92816ed56bde0](https://github.com/heygen-com/hyperframes/commit/92816ed56bde07affff0f6e0a5bce3dd96a96808), [#7684](https://github.com/heygen-com/hyperframes/pull/7684)).
+
+## Catalog
+
+- **CLI:** Report an invalid catalog --type as a usage error ([affa03b60fb08](https://github.com/heygen-com/hyperframes/commit/affa03b60fb082c93b1efa9341ac85a106dda61e), [#7678](https://github.com/heygen-com/hyperframes/pull/7678)).
+- Publish the hosted HyperFrames MCP to the official MCP registry ([0f6ed7d57bc9c](https://github.com/heygen-com/hyperframes/commit/0f6ed7d57bc9c6d449ce89cbfc3a7948a7427157), [#7676](https://github.com/heygen-com/hyperframes/pull/7676)).
+
+[View the full commit range](https://github.com/heygen-com/hyperframes/compare/v0.9.43...v0.9.44).
+</Update>
+
+<Update
+  label="HyperFrames v0.9.43"
+  description="Released - 2026-11-13"
+  tags={["Release", "Engine", "Studio", "CLI"]}
+>
+Renders on Windows no longer show coloured fringes around text, and previews open no audio device until a clip with sound plays. That second change ends long freezes on Windows. Drag and resize on an opaque preview now start from one read.
+
+## Features
+
+- **Studio:** Drag and resize on an opaque preview start from one gesture-start read ([6bdf9291647f3](https://github.com/heygen-com/hyperframes/commit/6bdf9291647f3739e7d74fc34d304e46ba7141b7), [#7657](https://github.com/heygen-com/hyperframes/pull/7657)).
+
+## Fixes
+
+- **Engine:** Render text without ClearType colour fringes on Windows ([273672ab13112](https://github.com/heygen-com/hyperframes/commit/273672ab13112e924cde0438a2c73f94f6d038a3), [#7663](https://github.com/heygen-com/hyperframes/pull/7663)).
+- **Core:** A looping preview keeps playing when a scene reloads during a hold for data ([b8f630c643b2b](https://github.com/heygen-com/hyperframes/commit/b8f630c643b2b24babb7666a2b261265dbfd64fd), [#7659](https://github.com/heygen-com/hyperframes/pull/7659)).
+- **Release:** Draft the changelog from a freshly fetched origin/main ([d7202bd42a4d7](https://github.com/heygen-com/hyperframes/commit/d7202bd42a4d7325c8fed29bf33629673d1a57b8), [#7660](https://github.com/heygen-com/hyperframes/pull/7660)).
+- **Deps:** Refresh vulnerable transitive resolutions in bun.lock ([0c2384db8816f](https://github.com/heygen-com/hyperframes/commit/0c2384db8816fb906f03650448d8645f12dcdf4b), [#7654](https://github.com/heygen-com/hyperframes/pull/7654)).
+- **Deps:** Bump tar, hono, @hono/node-server, adm-zip, sharp and postcss-selector-parser ([f01209d4aebf8](https://github.com/heygen-com/hyperframes/commit/f01209d4aebf8768aca5cd2d0f8c2130cc51b423), [#7656](https://github.com/heygen-com/hyperframes/pull/7656)).
+
+## Performance
+
+- **Core:** Open the preview's audio context when a clip with sound plays ([ccdcf6710c49e](https://github.com/heygen-com/hyperframes/commit/ccdcf6710c49eb64b5a858ea646d1f6d3a54bec0), [#7658](https://github.com/heygen-com/hyperframes/pull/7658)).
+
+## Internal
+
+- **CLI:** Remove committed TLS private key and generate test certificates ([85503a352b26d](https://github.com/heygen-com/hyperframes/commit/85503a352b26d3132a50e0da103eb0e546754082), [#7644](https://github.com/heygen-com/hyperframes/pull/7644)).
+
+[View the full commit range](https://github.com/heygen-com/hyperframes/compare/v0.9.42...v0.9.43).
+</Update>
+
+<Update
+  label="HyperFrames v0.9.42"
+  description="Released - 2026-11-13"
+  tags={["Release", "Studio", "Deps", "Producer"]}
+>
+Studio now says why a file cannot be saved when another program holds it open or it is read-only. Dragging and resizing a layer draw live over an opaque preview, local renders bring in only media, font, CSS and JS files from outside the project, and preparing fonts for large pages is faster.
+
+## Features
+
+- **Studio:** Drag and resize draw live on an opaque preview over its channel ([87c4a07dc99a9](https://github.com/heygen-com/hyperframes/commit/87c4a07dc99a91e185c02a53090bdf941ff32db2), [#7646](https://github.com/heygen-com/hyperframes/pull/7646)).
+- **Studio:** Layers panel and marquee read an opaque preview over its channel ([be67089a80b59](https://github.com/heygen-com/hyperframes/commit/be67089a80b59be945d84e09d400a4ece254daef), [#7639](https://github.com/heygen-com/hyperframes/pull/7639)).
+
+## Fixes
+
+- **Producer:** Local renders bring in only media, font, CSS and JS from outside the project ([2c2b399bfa229](https://github.com/heygen-com/hyperframes/commit/2c2b399bfa229d759d560aaf63e9717afed9805c), [#7647](https://github.com/heygen-com/hyperframes/pull/7647)).
+- **Studio:** A file held open or read-only answers 423 or 403 with a reason, not 404 or 500 ([0bce3315e645e](https://github.com/heygen-com/hyperframes/commit/0bce3315e645e513e10be271ad5bf415939a4147), [#7649](https://github.com/heygen-com/hyperframes/pull/7649)).
+- **Deps:** Update dependency undici to v7.30.1 [security] ([d79e72c02479b](https://github.com/heygen-com/hyperframes/commit/d79e72c02479b77195521d9a630702f7e0f53b00), [#6695](https://github.com/heygen-com/hyperframes/pull/6695)).
+- **Studio:** Open the canvas context menu when a pointer move overtakes its lookup ([d208281091b1c](https://github.com/heygen-com/hyperframes/commit/d208281091b1c00db1724a2ee3db0055955eb41b), [#7643](https://github.com/heygen-com/hyperframes/pull/7643)).
+
+## Performance
+
+- **Core:** The font step parses the page once for all its readers ([9f0a4edb439bb](https://github.com/heygen-com/hyperframes/commit/9f0a4edb439bbdc9782617a433b80d3f7f9dbe76), [#7650](https://github.com/heygen-com/hyperframes/pull/7650)).
+
+## Docs & Examples
+
+- **Adopters:** Add varg ([ff687fed9900e](https://github.com/heygen-com/hyperframes/commit/ff687fed9900ed6a531057f2ebbed7ad43e801c6), [#7640](https://github.com/heygen-com/hyperframes/pull/7640)).
+
+## Internal
+
+- **Deps:** Update happy-dom to ^21.0.4 ([d77731aab5ce6](https://github.com/heygen-com/hyperframes/commit/d77731aab5ce68d03323edc4c527535095e732cc), [#7641](https://github.com/heygen-com/hyperframes/pull/7641)).
+- **Skills:** Move the data-driven corpus fixture to zod 4 ([27af0ac8e178a](https://github.com/heygen-com/hyperframes/commit/27af0ac8e178ad34015fce4f7d4776434830d992), [#7642](https://github.com/heygen-com/hyperframes/pull/7642)).
+
+[View the full commit range](https://github.com/heygen-com/hyperframes/compare/v0.9.41...v0.9.42).
+</Update>
+
+<Update
   label="HyperFrames v0.9.41"
   description="Released - 2026-11-13"
   tags={["Release", "CLI", "Engine", "Producer"]}

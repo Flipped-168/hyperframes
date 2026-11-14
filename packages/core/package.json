@@ -1,6 +1,6 @@
 {
   "name": "@hyperframes/core",
-  "version": "0.9.41",
+  "version": "0.9.44",
   "description": "",
   "repository": {
     "type": "git",
@@ -67,6 +67,12 @@
       "node": "./dist/safePath.js",
       "import": "./src/safePath.ts",
       "types": "./src/safePath.ts"
+    },
+    "./safe-areas": {
+      "bun": "./src/safeAreas.ts",
+      "node": "./dist/safeAreas.js",
+      "import": "./src/safeAreas.ts",
+      "types": "./src/safeAreas.ts"
     },
     "./browser-marker": {
       "bun": "./src/browserMarker.ts",
@@ -678,6 +684,10 @@
         "import": "./dist/safePath.js",
         "types": "./dist/safePath.d.ts"
       },
+      "./safe-areas": {
+        "import": "./dist/safeAreas.js",
+        "types": "./dist/safeAreas.d.ts"
+      },
       "./browser-marker": {
         "import": "./dist/browserMarker.js",
         "types": "./dist/browserMarker.d.ts"
@@ -1126,12 +1136,12 @@
     "@fontsource/space-mono": "^5.2.9",
     "@types/jsdom": "^28.0.0",
     "@types/node": "^25.0.10",
-    "@vitest/coverage-v8": "^4.1.11",
+    "@vitest/coverage-v8": "^4.1.12",
     "gsap": "^3.15.0",
     "jsdom": "^29.0.0",
     "tsx": "^4.21.0",
     "typescript": "^5.0.0",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.12"
   },
   "optionalDependencies": {
     "esbuild": "^0.28.2"
