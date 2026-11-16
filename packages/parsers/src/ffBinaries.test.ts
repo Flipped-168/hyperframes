@@ -10,7 +10,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { delimiter, join, resolve } from "node:path";
+import { delimiter, join, resolve, win32 } from "node:path";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
 type FfBinariesModule = typeof import("./ffBinaries.js");
@@ -239,7 +239,7 @@ describe("findFfBinary", () => {
     skipped = {};
     vi.stubEnv("HYPERFRAMES_FFMPEG_PATH", "");
     vi.stubEnv("HYPERFRAMES_FFPROBE_PATH", "");
-    process.env.PATH = pathDirs.join(delimiter);
+    process.env.PATH = pathDirs.join(process.platform === "win32" ? win32.delimiter : delimiter);
     vi.spyOn(process, "cwd").mockReturnValue(project);
     vi.resetModules();
     vi.doMock("node:fs", async (importOriginal) => {
@@ -475,5 +475,41 @@ describe("isX86OnlyMachO", () => {
     expect(isX86OnlyMachO(fixture([0xca, 0xfe, 0xba, 0xbe, 0x00, 0x00, 0x00, 0x02]))).toBe(false);
     expect(isX86OnlyMachO(fixture([0x23, 0x21, 0x2f, 0x62, 0x69, 0x6e, 0x2f, 0x73]))).toBe(false);
     expect(isX86OnlyMachO("/nonexistent/ffprobe")).toBe(false);
+  });
+});
+
+describe("mediaInputFormatArgs", () => {
+  const formatsOf = (args: string[]) => args[args.indexOf("-format_whitelist") + 1]!.split(",");
+
+  afterEach(async () => (await importFresh())._setDemuxerListingForTests());
+
+  it("reads an ffmpeg 4 listing, which has no device column", async () => {
+    const { _setDemuxerListingForTests, mediaInputFormatArgs } = await importFresh();
+    _setDemuxerListingForTests(
+      [
+        "File formats:",
+        " D. = Demuxing supported",
+        " .E = Muxing supported",
+        " --",
+        " D  3dostr          3DO STR",
+        " D  dash            Dynamic Adaptive Streaming over HTTP",
+        " D  mov,mp4,m4a     QuickTime / MOV",
+      ].join("\n"),
+    );
+    expect(formatsOf(mediaInputFormatArgs("/ffprobe"))).toEqual(["3dostr", "mov", "mp4", "m4a"]);
+  });
+
+  it.skipIf(process.platform === "win32")("asks a binary that failed once again", async () => {
+    const { mediaInputFormatArgs, SELF_CONTAINED_FORMATS } = await importFresh();
+    const dir = mkdtempSync(join(tmpdir(), "hf-demuxers-"));
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
+    const binary = join(dir, "ffprobe");
+    writeFileSync(
+      binary,
+      `#!/bin/sh\nif [ -e "${dir}/ran" ]; then echo ' D  wav  WAV'; else touch "${dir}/ran"; exit 1; fi\n`,
+    );
+    chmodSync(binary, 0o755);
+    expect(mediaInputFormatArgs(binary)).toEqual(["-format_whitelist", SELF_CONTAINED_FORMATS]);
+    expect(mediaInputFormatArgs(binary)).toEqual(["-format_whitelist", "wav"]);
   });
 });

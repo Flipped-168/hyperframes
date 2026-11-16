@@ -10,6 +10,7 @@ import {
   isHdrColorSpace,
   sdrCanvasColourFilters,
 } from "@hyperframes/engine";
+import { mediaInputFormatArgs } from "@hyperframes/parsers/ff-binaries";
 import { screenshotOnceMore } from "../utils/screenshotOnceMore.js";
 import { parseTimeoutMs } from "../utils/timeoutArg.js";
 import type { Page } from "puppeteer-core";
@@ -88,6 +89,7 @@ import {
   sourceTimeAt,
   timeAtSourceTime,
   type RateSpec,
+  terminalText,
 } from "@hyperframes/core";
 import { parseHTML } from "linkedom";
 import { resolveProject } from "../utils/project.js";
@@ -490,7 +492,8 @@ export async function probeContainingSourceFrameSeek(
       const { stdout } = await runCancellableProcess(
         ffprobe,
         [
-          ...["-v", "error", "-select_streams", "v:0", "-read_intervals", readIntervals],
+          ...["-v", "error", ...mediaInputFormatArgs(ffprobe)],
+          ...["-select_streams", "v:0", "-read_intervals", readIntervals],
           ...["-show_entries", entries, "-of", "json", "--", videoPath],
         ],
         { timeoutMs: FFMPEG_EXTRACT_TIMEOUT_MS, maxBufferBytes: 32 * 1024 * 1024 },
@@ -614,7 +617,8 @@ async function probeSeekLanding(
     const { stdout } = await runCancellableProcess(
       ffmpeg,
       [
-        ...["-v", "error", "-copyts", "-noaccurate_seek", "-ss", String(seek), "-i", videoPath],
+        ...["-v", "error", "-copyts", "-noaccurate_seek", ...mediaInputFormatArgs(ffmpeg)],
+        ...["-ss", String(seek), "-i", videoPath],
         ...["-map", "0:v:0", "-c", "copy", "-frames:v", "1", "-f", "framecrc", "-"],
       ],
       { timeoutMs: FFMPEG_EXTRACT_TIMEOUT_MS, maxBufferBytes: 1024 * 1024 },
@@ -671,7 +675,12 @@ async function frameColour(
   videoPath: string,
   codec: string,
 ): Promise<ToneMapFrameColour> {
-  const read = (args: string[]) => runFfmpegOnce(ffmpegPath, args, FFMPEG_EXTRACT_TIMEOUT_MS);
+  const read = (args: string[]) =>
+    runFfmpegOnce(
+      ffmpegPath,
+      [...mediaInputFormatArgs(ffmpegPath), ...args],
+      FFMPEG_EXTRACT_TIMEOUT_MS,
+    );
   const probe = await read(firstFrameColourArgs(videoPath));
   const first = parseFirstFrameColour(probe.stderr);
   if (probe.code !== 0 || !readsKeyframeTransfers(first)) return first;
@@ -723,7 +732,7 @@ export async function extractVideoFrameToBuffer(
       const args = ["-hide_banner", "-loglevel", "error"];
       if (useVp9AlphaDecoder) args.push("-c:v", "libvpx-vp9");
       if (seek.seek !== undefined) args.push("-ss", String(seek.seek));
-      args.push("-i", videoPath, "-map", "0:v:0");
+      args.push(...mediaInputFormatArgs(ffmpegPath), "-i", videoPath, "-map", "0:v:0");
       const filters = frameFilters(seek.select, displayedPixels, metadata, toneMapFilter);
       if (filters.length > 0) args.push("-vf", filters.join(","));
       args.push("-frames:v", "1", "-q:v", "2", "-y", outPath);
@@ -784,7 +793,8 @@ export async function decodeFramesInOnePass(
       const filters = [selectFirstFrameAfterEach(byTime.map(([offset]) => offset)), ...rest];
       const args = ["-hide_banner", "-loglevel", "error"];
       if (useVp9AlphaDecoder) args.push("-c:v", "libvpx-vp9");
-      args.push("-ss", String(start), "-i", videoPath, "-map", "0:v:0", "-vf", filters.join(","));
+      args.push(...mediaInputFormatArgs(ffmpegPath), "-ss", String(start), "-i", videoPath);
+      args.push("-map", "0:v:0", "-vf", filters.join(","));
       args.push("-fps_mode", "passthrough", "-frames:v", String(byTime.length));
       args.push("-q:v", "2", "-y", join(tmp, "%d.png"));
       return args;
@@ -829,7 +839,7 @@ export async function frameOrWarn(
   } catch (error) {
     if (!(error instanceof FrameExtractError)) throw error;
     warnings.push(error.message);
-    console.warn(`   ${c.warn("⚠")} ${error.message}`);
+    console.warn(`   ${c.warn("⚠")} ${terminalText(error.message)}`);
     return null;
   }
 }
@@ -1010,7 +1020,7 @@ export async function captureSnapshots(
     : null;
   if (swallowed) {
     warnings.push(swallowed);
-    console.warn(`   ${c.warn("⚠")} ${swallowed}`);
+    console.warn(`   ${c.warn("⚠")} ${terminalText(swallowed)}`);
   }
   const server = await serveCapturePage(projectDir, html, opts.autoProxy);
   const fps = compositionFps(html);
@@ -1074,7 +1084,7 @@ export async function captureSnapshots(
         if (fontReport.unused.length > 0) parts.push(`${fontReport.unused.length} unused`);
         log(`\n   ${c.dim("Fonts:")} ${parts.join(", ")}`);
         if (fontReport.errored.length > 0) {
-          log(`   ${c.error("Fonts FAILED:")} ${fontReport.errored.join(", ")}`);
+          log(`   ${c.error("Fonts FAILED:")} ${terminalText(fontReport.errored.join(", "))}`);
         }
       }
 
@@ -1226,7 +1236,7 @@ export async function captureSnapshots(
           if (project?.refused) {
             const message = `${relative(projectDir, project.file)} is not media: a document, a pipe or device, or a playlist naming files outside its folder`;
             warnings.push(message);
-            console.warn(`   ${c.warn("⚠")} ${message}`);
+            console.warn(`   ${c.warn("⚠")} ${terminalText(message)}`);
           }
           return project;
         });
@@ -1630,7 +1640,7 @@ function warnUnsettledImages(images: UnsettledImages, time: number, warnings: st
     if (sources.length === 0) continue;
     const message = `${sources.length} image(s) ${what} at ${time}s, so the frame may be missing them: ${sources.join(", ")}`;
     warnings.push(message);
-    console.warn(`   ${c.warn("⚠")} ${message}`);
+    console.warn(`   ${c.warn("⚠")} ${terminalText(message)}`);
   }
 }
 
@@ -1747,19 +1757,19 @@ function printReview(
   log: (message: string) => void,
 ): void {
   const beats = review.plan.beats.map(
-    (beat) => `${formatSnapshotTimestamp(beat.time)} ${beat.label}`,
+    (beat) => `${formatSnapshotTimestamp(beat.time)} ${terminalText(beat.label)}`,
   );
   log(`   Beat sheet (settled frame per scene): ${sheets.beats.join(", ") || "none"}`);
   log(`     ${c.dim(beats.join(" · "))}`);
   review.plan.seams.forEach((seam, index) => {
-    const sides = `${seam.from ?? "start"} -> ${seam.to ?? "end"}`;
+    const sides = terminalText(`${seam.from ?? "start"} -> ${seam.to ?? "end"}`);
     const strip = sheets.seams[index] ?? "not written";
     log(`   Seam ${index + 1} at ${formatSnapshotTimestamp(seam.time)} (${sides}): ${strip}`);
   });
   log(
     `   Phone sheet (beats at ${REVIEW_PHONE_WIDTH} px wide): ${sheets.phone.join(", ") || "none"}`,
   );
-  for (const note of review.plan.notes) log(`   ${c.dim(note)}`);
+  for (const note of review.plan.notes) log(`   ${c.dim(terminalText(note))}`);
 }
 
 export default defineCommand({
@@ -1941,7 +1951,9 @@ export default defineCommand({
       camera && (camera.yaw !== 0 || camera.pitch !== 0)
         ? ` ${c.dim(`(angle yaw ${camera.yaw}° pitch ${camera.pitch}°)`)}`
         : "";
-    log(`${c.accent("◆")}  Capturing ${label} from ${c.accent(project.name)}${angleLabel}`);
+    log(
+      `${c.accent("◆")}  Capturing ${label} from ${c.accent(terminalText(project.name))}${angleLabel}`,
+    );
 
     let managedSnapshotDir: string | undefined;
     let exitCode = 0;
@@ -2133,7 +2145,7 @@ export default defineCommand({
             }
           } catch (descErr) {
             const msg = normalizeErrorMessage(descErr);
-            log(`   ${c.dim(`--describe failed: ${msg}`)}`);
+            log(`   ${c.dim(`--describe failed: ${terminalText(msg)}`)}`);
           }
         }
         if (asJson) {
@@ -2151,7 +2163,7 @@ export default defineCommand({
       if (err instanceof CliRuntimeError && err.result.presented) throw err;
       const msg = failureMessage(err);
       if (asJson) console.log(JSON.stringify(withMeta(jsonFailure("runtime_error", msg)), null, 2));
-      else console.error(`\n${c.error("✗")} Snapshot failed: ${msg}`);
+      else console.error(`\n${c.error("✗")} Snapshot failed: ${terminalText(msg)}`);
       failCommand();
     } finally {
       if (managedSnapshotDir)

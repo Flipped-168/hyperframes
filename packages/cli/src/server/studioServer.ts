@@ -5,6 +5,8 @@
  * providing a CLI-specific adapter for single-project, in-process rendering.
  */
 
+import { PREVIEW_NONCE_HEADER, previewProof } from "@hyperframes/core/preview-proof";
+import type { HttpBindings } from "@hono/node-server";
 import { Hono, type Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import { realpath } from "@hyperframes/core";
@@ -43,6 +45,7 @@ import {
 } from "@hyperframes/studio-server/request-identity";
 import { mountShareRoutes } from "./shareRoutes.js";
 import { isDevMode } from "../utils/env.js";
+import { outsideAssetsAllowed } from "../utils/receivedRender.js";
 import { insideHostApp } from "../utils/desktopApp.js";
 import { runRenderSetupWorker } from "../utils/cancellableProcess.js";
 import { acquireRenderLock, describeRenderLockHolder } from "../utils/renderLock.js";
@@ -104,6 +107,8 @@ const STUDIO_MANUAL_EDITS_PATH = ".hyperframes/studio-manual-edits.json";
 // Under preview.ts's 3s process-exit watchdog, so shutdown() always returns
 // before that watchdog can fire and skip this file's browser cleanup.
 const RENDER_SHUTDOWN_WAIT_MS = 2_000;
+
+const LINT_WORKER_TIMEOUT_MS = 120_000;
 
 // Vite emits only content-hashed files under dist/assets; hand-authored
 // public/ files land at the dist root. The route is the signal because the
@@ -604,11 +609,11 @@ export function createStudioServer(options: StudioServerOptions): StudioServer {
 
     // Out of process: linting a large composition is seconds of synchronous parsing, and on
     // this event loop it stalls every other Studio request, the preview included.
-    lintProject: (dir: string) =>
+    lintProject: (dir: string, signal?: AbortSignal) =>
       runRenderSetupWorker<ProjectLintResult>(
         "lint",
         { projectDir: dir, host: "studio", background: true },
-        { maxBufferBytes: 8 * 1024 * 1024 },
+        { maxBufferBytes: 8 * 1024 * 1024, signal, timeoutMs: LINT_WORKER_TIMEOUT_MS },
       ),
 
     runtimeUrl: "/api/runtime.js",
@@ -667,6 +672,11 @@ export function createStudioServer(options: StudioServerOptions): StudioServer {
             process.env.PRODUCER_HEADLESS_SHELL_PATH = browser.executablePath;
           }
 
+          const allowOutsideProjectAssets = outsideAssetsAllowed(
+            opts.project.dir,
+            opts.composition,
+            (line) => console.warn(`[studio] ${line}`),
+          );
           const manifestContent = readStudioManualEditManifestContent(opts.project.dir);
           const manualEditsRenderScript = createStudioManualEditsRenderBodyScript(manifestContent);
           const job = createRenderJob({
@@ -683,7 +693,7 @@ export function createStudioServer(options: StudioServerOptions): StudioServer {
             ...encoderJobOptions(opts),
             ...(opts.useGpu ? { useGpu: true } : {}),
             ...(opts.pageMotionBlur ? { pageMotionBlur: opts.pageMotionBlur } : {}),
-            allowOutsideProjectAssets: true,
+            allowOutsideProjectAssets,
           });
           renderJob = job;
           const onProgress = (j: { progress: number; currentStage?: string }) => {
@@ -943,7 +953,7 @@ export function createStudioServer(options: StudioServerOptions): StudioServer {
   app.get("/__hyperframes_config", (c) => {
     const serve = async () => {
       const serverBuildSignature = await loadPreviewServerBuildSignature();
-      return c.json({
+      const config = {
         isHyperframes: true,
         pid: process.pid,
         projectName: projectId,
@@ -951,7 +961,17 @@ export function createStudioServer(options: StudioServerOptions): StudioServer {
         serverBuildSignature,
         browserGpuMode,
         version,
-      });
+      };
+      const socket = (c.env as Partial<HttpBindings> | undefined)?.incoming?.socket;
+      const proof =
+        socket?.localAddress && socket.localPort
+          ? previewProof(
+              c.req.header(PREVIEW_NONCE_HEADER),
+              { address: socket.localAddress, port: socket.localPort },
+              config,
+            )
+          : null;
+      return c.json({ ...config, ...(proof && { proof }) });
     };
     return serve();
   });

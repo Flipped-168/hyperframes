@@ -1,3 +1,4 @@
+import { terminalText } from "@hyperframes/core";
 import { defineCommand } from "../utils/defineCommand.js";
 import { existsSync, readFileSync } from "node:fs";
 import { isWithinProjectRoot, readProjectFile } from "@hyperframes/parsers/asset-resolution";
@@ -999,7 +1000,7 @@ function printCompositionTweens(cmp: SurfacedComposition): void {
 // Print one composition's traces + tweens (skipping strokes already shown in a trace).
 function printComposition(cmp: SurfacedComposition): void {
   if (isEmptyComposition(cmp)) return;
-  console.log(c.bold(`${cmp.composition}`) + c.dim(`  (${cmp.source})`));
+  console.log(c.bold(terminalText(cmp.composition)) + c.dim(`  (${terminalText(cmp.source)})`));
   for (const tr of cmp.traces) printTrace(tr);
   printCompositionTweens(cmp);
   for (const cssKeyframes of cmp.cssKeyframes) printCssKeyframes(cssKeyframes);
