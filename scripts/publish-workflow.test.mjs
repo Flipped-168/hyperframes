@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { gzipSync } from "node:zlib";
 import test from "node:test";
 import { parse } from "yaml";
 
@@ -46,17 +47,221 @@ function runCreateReleaseTag(cwd, version) {
 }
 
 test("stable publishing has one reviewed immutable event path", () => {
-  assert.deepEqual(config.on.push.tags, ["v*-*"]);
-  assert.equal(config.on.workflow_dispatch, undefined);
-  assert.equal(
-    normalizeExpression(publish.if),
-    "github.event_name == 'push' || (github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'release/v'))",
-  );
-  assert.equal(
-    normalizeExpression(publish.env.EXPECTED_RELEASE_SHA),
-    "${{ github.event_name == 'pull_request' && github.event.pull_request.merge_commit_sha || github.sha }}",
-  );
+  // fails without the fix: a merged release PR's event ran as refs/pull/N/merge, a ref the publish environment refuses.
+  assert.deepEqual(config.on, { push: { branches: ["main"], tags: ["v*-*"] } });
+  for (const name of ["lambda-arm64-ffmpeg", "lambda-handler-zip", "pack", "publish"]) {
+    const job = config.jobs[name];
+    assert.ok(job.needs.includes("release-source"), `${name} needs release-source`);
+    assert.equal(normalizeExpression(job.if), "needs.release-source.outputs.sha != ''", name);
+    assert.equal(job.env.EXPECTED_RELEASE_SHA, "${{ needs.release-source.outputs.sha }}", name);
+  }
   assert.equal(checkout.with.ref, "${{ env.EXPECTED_RELEASE_SHA }}");
+});
+
+test("a release run waits behind another run of the same release, never behind main", () => {
+  // A ref-wide group on main lets any later push cancel a release run that is still pending.
+  assert.equal(config.concurrency, undefined);
+  assert.deepEqual(publish.concurrency, {
+    group: "publish-${{ needs.release-source.outputs.version }}",
+    "cancel-in-progress": false,
+  });
+});
+
+test("a push to main publishes only the merge of exactly one approved release PR from this repo", () => {
+  const step = stepOf(config.jobs["release-source"], "Find the release this push publishes");
+  const bin = mkdtempSync(join(tmpdir(), "hyperframes-fake-gh-"));
+  const sha = "a".repeat(40);
+  const head = "c".repeat(40);
+  const pull = (overrides = {}) => ({
+    number: 8000,
+    user: { login: "releaser" },
+    merged_at: "2026-11-17T02:24:00Z",
+    merge_commit_sha: sha,
+    base: { ref: "main" },
+    head: { ref: "release/v0.9.61", sha: head, repo: { full_name: "heygen-com/hyperframes" } },
+    ...overrides,
+  });
+  const review = (login, state, hour, commit = head, type = "User") => ({
+    user: { login, type },
+    state,
+    commit_id: commit,
+    submitted_at: `2026-11-17T0${hour}:00:00Z`,
+  });
+  const approved = [review("reviewer", "APPROVED", 1)];
+  // The fake answers PR 8000's reviews, commits and events, the commit's PR lookup from FAKE_PULLS, and each
+  // reviewer's permission from FAKE_PERMISSIONS (login=permission lines); the lookup of FAKE_PERMISSION_FAILS fails.
+  writeFileSync(
+    join(bin, "gh"),
+    `#!/bin/sh
+case "$*" in
+  *pulls/8000/reviews*) printf '%s' "$FAKE_REVIEWS" ;;
+  *pulls/8000/commits*) printf '%s' "$FAKE_COMMITS" ;;
+  *issues/8000/events*) printf '%s' "$FAKE_EVENTS" ;;
+  *collaborators/*/permission*)
+    login="$(printf '%s' "$*" | sed 's#.*collaborators/\\([^/]*\\)/permission.*#\\1#')"
+    [ "$login" != "$FAKE_PERMISSION_FAILS" ] || exit 1
+    printf '%s\\n' "$FAKE_PERMISSIONS" | sed -n "s/^$login=//p" ;;
+  *) printf '%s' "$FAKE_PULLS" ;;
+esac
+`,
+  );
+  const commit = (author, committer = author) => ({
+    author: { login: author },
+    committer: { login: committer },
+  });
+  const permissions = "releaser=admin\nreviewer=write\nother=admin\noutsider=read";
+  chmodSync(join(bin, "gh"), 0o755);
+  const main = { REF_TYPE: "branch", REF_NAME: "main" };
+  const run = (pulls, ref = main, reviews = approved, history = {}) => {
+    const out = join(bin, "out");
+    writeFileSync(out, "");
+    const result = runStep(step, {
+      cwd: bin,
+      env: {
+        REPO: "heygen-com/hyperframes",
+        SHA: sha,
+        RUNNER_TEMP: bin,
+        GITHUB_OUTPUT: out,
+        FAKE_PULLS: JSON.stringify(pulls),
+        FAKE_REVIEWS: JSON.stringify(reviews),
+        FAKE_COMMITS: JSON.stringify(history.commits ?? [commit("releaser", "web-flow")]),
+        FAKE_EVENTS: JSON.stringify(history.events ?? []),
+        FAKE_PERMISSIONS: history.permissions ?? permissions,
+        FAKE_PERMISSION_FAILS: history.permissionFails ?? "",
+        ...ref,
+      },
+      path: `${bin}:${process.env.PATH}`,
+    });
+    const outputs = Object.fromEntries(
+      readFileSync(out, "utf8")
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => line.split(/=(.*)/s).slice(0, 2)),
+    );
+    return { status: result.status, outputs };
+  };
+  try {
+    assert.deepEqual(run([pull()]), {
+      status: 0,
+      outputs: { sha, version: "0.9.61", source: "release-pr", ref: "release/v0.9.61" },
+    });
+    for (const [why, pulls] of [
+      ["no PR", []],
+      ["not merged", [pull({ merged_at: null })]],
+      ["another commit of the PR", [pull({ merge_commit_sha: "b".repeat(40) })]],
+      ["not into main", [pull({ base: { ref: "next" } })]],
+      [
+        "from a fork",
+        [pull({ head: { ref: "release/v0.9.61", repo: { full_name: "x/hyperframes" } } })],
+      ],
+      ["a deleted fork", [pull({ head: { ref: "release/v0.9.61", repo: null } })]],
+      [
+        "not a release branch",
+        [pull({ head: { ref: "fix/x", repo: { full_name: "heygen-com/hyperframes" } } })],
+      ],
+      [
+        "a prerelease branch",
+        [
+          pull({
+            head: { ref: "release/v0.9.61-alpha.1", repo: { full_name: "heygen-com/hyperframes" } },
+          }),
+        ],
+      ],
+    ]) {
+      assert.deepEqual(run(pulls), { status: 0, outputs: {} }, why);
+    }
+    const releaseSubject = {
+      REF_TYPE: "branch",
+      REF_NAME: "main",
+      HEAD_MESSAGE: "chore: release v0.9.61 (#8000)\n\nnotes",
+    };
+    assert.equal(
+      run([], releaseSubject).status,
+      1,
+      "a release commit whose PR is not listed yet fails, never skips",
+    );
+    assert.equal(
+      run([], { ...releaseSubject, HEAD_MESSAGE: "fix: name chore: release v1 in the docs" })
+        .status,
+      0,
+      "only the subject's start counts",
+    );
+    for (const [why, reviews] of [
+      ["no review", []],
+      ["only the author approved", [review("releaser", "APPROVED", 1)]],
+      ["an earlier commit was approved", [review("reviewer", "APPROVED", 1, "d".repeat(40))]],
+      ["a comment is not an approval", [review("reviewer", "COMMENTED", 1)]],
+      ["a dismissed approval", [review("reviewer", "DISMISSED", 1)]],
+      ["an app's approval", [review("review-app[bot]", "APPROVED", 1, head, "Bot")]],
+      [
+        "an app's change request stands",
+        [...approved, review("review-app[bot]", "CHANGES_REQUESTED", 2, head, "Bot")],
+      ],
+      [
+        "another reviewer's change request stands",
+        [...approved, review("other", "CHANGES_REQUESTED", 2)],
+      ],
+      [
+        "the approver later asked for changes",
+        [...approved, review("reviewer", "CHANGES_REQUESTED", 2)],
+      ],
+    ]) {
+      assert.equal(run([pull()], main, reviews).status, 1, why);
+    }
+    // Anyone can review a public repo: only a reviewer with write access counts, either way.
+    assert.equal(
+      run([pull()], main, [review("outsider", "APPROVED", 1)]).status,
+      1,
+      "an approval from an account without write access",
+    );
+    assert.equal(
+      run([pull()], main, [...approved, review("outsider", "CHANGES_REQUESTED", 2)]).status,
+      0,
+      "a change request from an account without write access blocks nothing",
+    );
+    const outsiderObjects = [...approved, review("outsider", "CHANGES_REQUESTED", 2)];
+    assert.equal(
+      run([pull()], main, outsiderObjects, { permissionFails: "outsider" }).status,
+      1,
+      "a permission that cannot be read refuses the release, even for a review that would not count",
+    );
+    assert.equal(
+      run([pull()], main, [...approved, review("outsider", "COMMENTED", 2)], {
+        permissionFails: "outsider",
+      }).status,
+      0,
+      "a reviewer who only commented is not looked up",
+    );
+    for (const [why, history] of [
+      ["the approver wrote the approved commit", { commits: [commit("reviewer", "web-flow")] }],
+      ["the approver committed it", { commits: [commit("releaser", "reviewer")] }],
+      [
+        "the approver force-pushed the branch",
+        { events: [{ event: "head_ref_force_pushed", actor: { login: "reviewer" } }] },
+      ],
+    ]) {
+      assert.equal(run([pull()], main, approved, history).status, 1, why);
+    }
+    const reapproved = [
+      review("reviewer", "CHANGES_REQUESTED", 1),
+      review("reviewer", "APPROVED", 2),
+    ];
+    assert.equal(
+      run([pull()], main, reapproved).status,
+      0,
+      "a later approval answers its own change request",
+    );
+    const second = pull({
+      head: { ref: "release/v0.9.62", repo: { full_name: "heygen-com/hyperframes" } },
+    });
+    assert.equal(run([pull(), second]).status, 1, "two release PRs for one commit");
+    assert.deepEqual(run([], { REF_TYPE: "tag", REF_NAME: "v0.9.61-alpha.1" }), {
+      status: 0,
+      outputs: { sha, version: "0.9.61-alpha.1", source: "tag", ref: "v0.9.61-alpha.1" },
+    });
+  } finally {
+    rmSync(bin, { recursive: true, force: true });
+  }
 });
 
 test("the executable checkout guard cannot be conditionally disabled", () => {
@@ -78,7 +283,7 @@ test("the executable checkout guard cannot be conditionally disabled", () => {
 
 test("stable release tag recovery is idempotent and immutable", () => {
   assert.ok(createReleaseTag);
-  assert.equal(createReleaseTag.if, "github.event_name == 'pull_request'");
+  assert.equal(createReleaseTag.if, "needs.release-source.outputs.source == 'release-pr'");
   assert.equal(
     createReleaseTag.run.trim(),
     [
@@ -263,7 +468,7 @@ test("release-commit code runs only in a job without secrets", () => {
       assert.equal(name, "GH_TOKEN");
     }
   }
-  assert.deepEqual(publish.needs, ["pack"]);
+  assert.deepEqual(publish.needs, ["release-source", "pack"]);
 });
 
 test("the publish job runs no code from the release commit", () => {
@@ -286,15 +491,21 @@ test("the publish job runs no code from the release commit", () => {
 
 test("the publish job checks the release channel without repo scripts", () => {
   const step = stepOf(publish, "Check release channel");
-  const check = (EVENT_NAME, VERSION, PRERELEASE, DIST_TAG = "alpha") =>
-    runStep(step, { cwd: tmpdir(), env: { EVENT_NAME, VERSION, PRERELEASE, DIST_TAG } }).status;
-  assert.equal(check("push", "0.9.55-alpha.1", "true"), 0);
-  assert.equal(check("pull_request", "0.9.55", "false"), 0);
-  assert.equal(check("push", "0.9.55", "false"), 1);
-  assert.equal(check("pull_request", "0.9.55-alpha.1", "true"), 1);
-  assert.equal(check("push", "0.9.55-alpha.1;id", "true"), 1);
-  assert.equal(check("push", "0.9.55-latest.1", "true", "latest"), 1);
-  assert.equal(check("push", "0.9.55-hdr.1", "true", "hdr"), 0);
+  const check = (SOURCE, VERSION, PRERELEASE, DIST_TAG = "alpha") =>
+    runStep(step, { cwd: tmpdir(), env: { SOURCE, VERSION, PRERELEASE, DIST_TAG } }).status;
+  assert.equal(check("tag", "0.9.55-alpha.1", "true"), 0);
+  assert.equal(check("release-pr", "0.9.55", "false"), 0);
+  assert.equal(check("tag", "0.9.55", "false"), 1);
+  assert.equal(check("release-pr", "0.9.55-alpha.1", "true"), 1);
+  assert.equal(check("tag", "0.9.55-alpha.1;id", "true"), 1);
+  assert.equal(check("tag", "0.9.55-latest.1", "true", "latest"), 1);
+  assert.equal(check("tag", "0.9.55-hdr.1", "true", "hdr"), 0);
+  assert.equal(check("tag", "0.9.55-beta.1", "true", "beta"), 0);
+  assert.equal(check("tag", "0.9.55-LATEST.1", "true", "LATEST"), 1);
+  assert.equal(check("tag", "0.9.55-Latest.1", "true", "Latest"), 1);
+  assert.equal(check("tag", "0.9.55-Alpha.1", "true", "Alpha"), 1);
+  assert.equal(check("tag", "0.9.55-stable.1", "true", "stable"), 1);
+  assert.equal(check("", "0.9.55", "false", "latest"), 1, "no release source");
 });
 
 test("the publish job takes only tarballs that npm reads the way the check does", () => {
@@ -510,7 +721,7 @@ test("publishing skips only identical uploads and fails on a version it did not 
   assert.doesNotMatch(rerun.calls, /npm publish/);
 });
 
-test("every publish runs in the approval-gated npm-publish environment", () => {
+test("every publish runs in npm-publish, the environment npm trusted publishing names", () => {
   assert.equal(publish.environment, "npm-publish");
   const jobsWithEnvironment = Object.entries(config.jobs).filter(([, job]) => job.environment);
   assert.deepEqual(
@@ -609,3 +820,146 @@ for (const [job, name, artifact] of [
     assert.notEqual(runFindPrevious(step, [{ id: 1, name: artifact, expired: true }]).status, 0);
   });
 }
+
+// A tarball whose second entry GNU tar reads as package/d/package/package.json and npm's node-tar reads as
+// package/package.json: ustar magic, version bytes other than "00", a non-empty prefix.
+function packSplitReading(dir, file, checked, published) {
+  const staging = mkdtempSync(join(tmpdir(), "hyperframes-split-fixture-"));
+  try {
+    mkdirSync(join(staging, "package"));
+    writeFileSync(join(staging, "package", "package.json"), JSON.stringify(checked));
+    writeFileSync(join(staging, "package", "x.json"), JSON.stringify(published));
+    const tar = execFileSync("tar", [
+      "--format=ustar",
+      "-cf",
+      "-",
+      "-C",
+      staging,
+      "package/package.json",
+      "package/x.json",
+    ]);
+    const header = 1024;
+    tar.fill(0, header, header + 100);
+    tar.write("package/package.json", header, "latin1");
+    tar.fill(0, header + 345, header + 500);
+    tar.write("package/d", header + 345, "latin1");
+    tar.write("ustar\0", header + 257, "latin1");
+    tar.fill(0, header + 263, header + 265);
+    tar.fill(0x20, header + 148, header + 156);
+    let sum = 0;
+    for (let i = header; i < header + 512; i += 1) sum += tar[i];
+    tar.write(`${sum.toString(8).padStart(6, "0")}\0 `, header + 148, "latin1");
+    writeFileSync(join(dir, file), gzipSync(tar));
+  } finally {
+    rmSync(staging, { recursive: true, force: true });
+  }
+}
+
+test("npm publishes only what the check read: name, version and every file", () => {
+  const step = stepOf(publish, "Check what npm will publish");
+  const name = "@hyperframes/core";
+  const version = "1.2.3-alpha.1";
+  const run = (make, expected = name) => {
+    const temp = mkdtempSync(join(tmpdir(), "hyperframes-npm-reads-"));
+    try {
+      make(temp, "core.tgz");
+      writeFileSync(join(temp, "publish-order.tsv"), `${expected}\t${join(temp, "core.tgz")}\n`);
+      return runStep(step, { cwd: temp, env: { VERSION: version, DIST_TAG: "alpha" } });
+    } finally {
+      rmSync(temp, { recursive: true, force: true });
+    }
+  };
+  const clean = run((dir, file) => packTarball(dir, file, { name, version }));
+  assert.equal(clean.status, 0, clean.stderr + clean.stdout);
+  // fails without the fix: the layout check passed this tarball and npm would publish swapped-package@9.9.9.
+  const split = run((dir, file) =>
+    packSplitReading(dir, file, { name, version }, { name: "swapped-package", version: "9.9.9" }),
+  );
+  assert.equal(split.status, 1);
+  assert.match(
+    split.stdout,
+    /npm (would publish core\.tgz as swapped-package@9\.9\.9|and tar read different files)/,
+  );
+  // Same name and version, other contents: only the file lists differ.
+  const swapped = run((dir, file) =>
+    packSplitReading(
+      dir,
+      file,
+      { name, version },
+      { name, version, scripts: { postinstall: "x" } },
+    ),
+  );
+  assert.equal(swapped.status, 1);
+  assert.match(swapped.stdout, /npm and tar read different files in core\.tgz/);
+  const renamed = run((dir, file) =>
+    packTarball(dir, file, { name: "@hyperframes/other", version }),
+  );
+  assert.equal(renamed.status, 1);
+  assert.match(
+    renamed.stdout,
+    /would publish core\.tgz as @hyperframes\/other@1\.2\.3-alpha\.1, not @hyperframes\/core@1\.2\.3-alpha\.1/,
+  );
+});
+
+const stepIndex = (job, name) => {
+  const index = job.steps.findIndex((step) => step.name === name);
+  assert.ok(index >= 0, `missing step ${name}`);
+  return index;
+};
+
+test("both tarball checks pass before the release tag or anything else is written", () => {
+  const tag = stepIndex(publish, "Create release tag");
+  assert.ok(stepIndex(publish, "Check packed tarballs") < tag);
+  assert.ok(stepIndex(publish, "Check what npm will publish") < tag);
+  assert.ok(
+    stepIndex(publish, "Check packed tarballs") < stepIndex(publish, "Check what npm will publish"),
+  );
+});
+
+test("a tag publishes only a commit already on main, next or alpha, before any job builds it", () => {
+  const source = config.jobs["release-source"];
+  assert.ok(source, "missing the release-source job");
+  for (const name of ["lambda-arm64-ffmpeg", "lambda-handler-zip"]) {
+    assert.deepEqual(config.jobs[name].needs, ["release-source"], name);
+  }
+  assert.deepEqual([...pack.needs].sort(), [
+    "lambda-arm64-ffmpeg",
+    "lambda-handler-zip",
+    "release-source",
+  ]);
+  const step = stepOf(source, "Check the tagged commit is on main, next or alpha");
+  assert.equal(step.if, "github.ref_type == 'tag'");
+  const bin = mkdtempSync(join(tmpdir(), "hyperframes-fake-gh-"));
+  try {
+    // The fake answers compare/<branch>...<sha> from FAKE_<branch>; an unset branch answers like a 404.
+    writeFileSync(
+      join(bin, "gh"),
+      '#!/bin/sh\nb="${2#*compare/}"; b="${b%%...*}"\neval "v=\\${FAKE_$b-}"\n[ -n "$v" ] || exit 1\necho "$v"\n',
+    );
+    chmodSync(join(bin, "gh"), 0o755);
+    const status = (branches) =>
+      runStep(step, {
+        cwd: bin,
+        env: {
+          REPO: "heygen-com/hyperframes",
+          TAGGED: "abc",
+          ...Object.fromEntries(Object.entries(branches).map(([b, v]) => [`FAKE_${b}`, v])),
+        },
+        path: `${bin}:${process.env.PATH}`,
+      }).status;
+    assert.equal(status({ main: "identical" }), 0);
+    assert.equal(status({ main: "behind" }), 0);
+    assert.equal(
+      status({ main: "diverged", next: "behind" }),
+      0,
+      "a commit on next publishes an alpha",
+    );
+    assert.equal(status({ main: "ahead", next: "diverged", alpha: "identical" }), 0);
+    // fails without the fix: a v*-* tag on any other commit went on to build and publish.
+    assert.equal(status({ main: "ahead", next: "diverged" }), 1, "a commit on no allowed branch");
+    assert.equal(status({ main: "diverged", next: "ahead", alpha: "ahead" }), 1);
+    assert.equal(status({}), 1, "no branch answers");
+  } finally {
+    rmSync(bin, { recursive: true, force: true });
+  }
+});

@@ -1,3 +1,4 @@
+import type { ExpectedOutputDimensions } from "./render/outputDimensions.js";
 import { audioFailureDiagnostics } from "@hyperframes/engine";
 // fallow-ignore-file unused-type circular-dependency code-duplication complexity
 /**
@@ -162,6 +163,8 @@ import {
   type MemorySampler,
   reportExtractProgress,
   updateJobStatus,
+  audioWaitReporter,
+  AUDIO_STAGE,
   audioWorkDir,
 } from "./render/shared.js";
 import { frameCacheOptions } from "./render/frameCacheBudget.js";
@@ -450,6 +453,7 @@ export interface RenderConfig {
   /** Entry HTML file relative to projectDir. Defaults to "index.html". */
   entryFile?: string;
   allowOutsideProjectAssets?: CompileForRenderOptions["allowOutsideProjectAssets"];
+  includeOutsideScripts?: CompileForRenderOptions["includeOutsideScripts"];
   /** Full producer config. When provided, env vars are not read. */
   producerConfig?: EngineConfig;
   /** Custom logger. Defaults to console-based defaultLogger. */
@@ -493,6 +497,7 @@ export interface RenderConfig {
    */
   variables?: Record<string, unknown>;
   strictVariables?: boolean;
+  expectedOutputDimensions?: ExpectedOutputDimensions;
   /**
    * Override the output resolution via Chrome `deviceScaleFactor` (DPR).
    * The composition's authored dimensions are unchanged. See
@@ -616,6 +621,7 @@ export interface RenderPerfSummary {
     verifiedFrames?: number;
     reusedFrames: number;
     skipReason?: string;
+    ineligibleCause?: string;
     verificationOutcomes?: StaticVerificationOutcome[];
     plannedRuns?: number;
     completedRuns?: number;
@@ -804,6 +810,7 @@ export interface RenderStageProgress {
 export interface RenderJob extends Partial<ReferenceBackgroundResult> {
   id: string;
   strictVariablesChecked?: boolean;
+  outputDimensionsChecked?: boolean;
   config: RenderConfig;
   status: RenderStatus;
   progress: number;
@@ -3739,10 +3746,11 @@ async function executeRenderPipeline(input: {
     });
 
     // ── Stage 3: Audio processing ───────────────────────────────────────
-    updateJobStatus(job, "preprocessing", "Processing audio tracks", 20, onProgress, {
+    updateJobStatus(job, "preprocessing", AUDIO_STAGE, 20, onProgress, {
       code: "process_audio",
     });
 
+    const audioWait = audioWaitReporter(job, onProgress);
     const audioStage = observeRenderStage(
       observability,
       "audio_process",
@@ -3763,6 +3771,7 @@ async function executeRenderPipeline(input: {
           assertNotAborted,
           log,
           keepDeliverySource: true,
+          onFfmpegProgress: audioWait.progressed,
         }),
     );
     pendingAudio = audioStage.catch(() => undefined);
@@ -3789,6 +3798,7 @@ async function executeRenderPipeline(input: {
           preHeadScripts: [VIRTUAL_TIME_SHIM],
           fps: job.config.fps,
           allowOutsideProjectAssets: job.config.allowOutsideProjectAssets,
+          includeOutsideScripts: job.config.includeOutsideScripts,
         });
         assertNotAborted();
         observability.stageEnd("file_server", fileServerStart);
@@ -4930,7 +4940,7 @@ async function executeRenderPipeline(input: {
     const effectiveQuality = job.config.crf ?? preset.quality;
     const effectiveBitrate = job.config.crf != null ? undefined : job.config.videoBitrate;
 
-    const audioResult = await audioStage;
+    const audioResult = await audioWait.wait(audioStage);
     const { audioOutputPath, deliverySourcePath, hasAudio } = audioResult;
     perfStages.audioProcessMs = audioResult.audioProcessMs;
     recordLimiterAttenuation(job, audioResult.audioLoweredDb);
@@ -5571,7 +5581,10 @@ async function executeRenderPipeline(input: {
           !cfg.useDrawElement &&
           workerSizing !== undefined &&
           canEncodeWhileCapturing(encodeInput, capturePlan.workerCount, workerSizing.cpuCount)
-            ? encodeWhileCapturing(encodeInput, totalFrames)
+            ? encodeWhileCapturing(encodeInput, totalFrames, {
+                workerCount: capturePlan.workerCount,
+                cpuCount: workerSizing.cpuCount,
+              })
             : null;
         const captureFrameStart = Date.now();
         const invokeDiskCapture = (diskPlan: SdrDiskCapturePlan) =>

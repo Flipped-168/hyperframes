@@ -13,6 +13,7 @@ import {
   heygenJSON,
   heygenMessage,
   loadEnvFromDir,
+  noteProjectElevenLabsKey,
 } from "./heygen.mjs";
 
 const HEYGEN_ENV = [
@@ -411,7 +412,10 @@ test("loadEnvFromDir skips a .env folder and loads the .env file above it", () =
   const saved = process.env.ELEVENLABS_API_KEY;
   delete process.env.ELEVENLABS_API_KEY;
   try {
-    loadEnvFromDir(project);
+    withCleanHeygenEnv(() => {
+      process.env.HYPERFRAMES_CONFIG_DIR = join(root, "no-config");
+      loadEnvFromDir(project);
+    });
     assert.equal(process.env.ELEVENLABS_API_KEY, "from-parent");
   } finally {
     if (saved === undefined) delete process.env.ELEVENLABS_API_KEY;
@@ -437,10 +441,16 @@ test("a project's .env supplies provider keys only, never programs, runtime opti
   for (const key of keys) delete process.env[key];
   const project = mkdtempSync(join(tmpdir(), "heygen-env-"));
   writeFileSync(join(project, ".env"), keys.map((key) => `${key}=/project/value`).join("\n"));
+  const configDir = join(project, "no-config");
   try {
-    loadEnvFromDir(project);
-    assert.equal(process.env.ELEVENLABS_API_KEY, "/project/value");
-    for (const key of keys.slice(1)) assert.equal(process.env[key], undefined, key);
+    withCleanHeygenEnv(() => {
+      process.env.HYPERFRAMES_CONFIG_DIR = configDir;
+      loadEnvFromDir(project);
+      assert.equal(process.env.ELEVENLABS_API_KEY, "/project/value");
+      assert.equal(process.env.HYPERFRAMES_CONFIG_DIR, configDir);
+      for (const key of keys.slice(1).filter((key) => key !== "HYPERFRAMES_CONFIG_DIR"))
+        assert.equal(process.env[key], undefined, key);
+    });
   } finally {
     for (const key of keys) {
       if (saved[key] === undefined) delete process.env[key];
@@ -623,5 +633,142 @@ test("a refused HyperFrames-plan call becomes one line with the billing command"
   assert.equal(
     heygenMessage({ status: 400, body: JSON.stringify({ error: { message: "bad voice" } }) }),
     "bad voice",
+  );
+});
+
+const PROVIDER_ENV = [
+  "GEMINI_API_KEY",
+  "GOOGLE_API_KEY",
+  "GOOGLE_APPLICATION_CREDENTIALS",
+  "GCS_CREDS",
+  "ELEVENLABS_API_KEY",
+  "HYPERFRAMES_PROJECT_ENV_ORIGINS",
+];
+
+// Runs fn(project, notes) with HeyGen and provider variables unset, no saved credentials, the given shell variables
+// set and a project folder whose .env holds `env`; `received` lists that .env in a received-files record.
+function withProviderProject({ shell = {}, env, received }, fn) {
+  return withCleanHeygenEnv(() => {
+    const previous = Object.fromEntries(PROVIDER_ENV.map((name) => [name, process.env[name]]));
+    const project = mkdtempSync(join(tmpdir(), "hf-media-provider-"));
+    const notes = [];
+    const write = process.stderr.write;
+    try {
+      for (const name of PROVIDER_ENV) delete process.env[name];
+      process.env.HYPERFRAMES_CONFIG_DIR = join(project, "no-config");
+      Object.assign(process.env, shell);
+      writeFileSync(join(project, ".env"), env);
+      if (received) {
+        mkdirSync(join(project, ".hyperframes"));
+        writeFileSync(
+          join(project, ".hyperframes", "received-files.json"),
+          JSON.stringify({ files: [".env"] }),
+        );
+      }
+      process.stderr.write = (line) => notes.push(String(line));
+      fn(project, notes);
+    } finally {
+      process.stderr.write = write;
+      for (const [name, value] of Object.entries(previous)) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+      rmSync(project, { recursive: true, force: true });
+    }
+  });
+}
+
+test("loadEnvFromDir leaves out a received .env's Gemini key when the shell has Gemini credentials", () => {
+  withProviderProject(
+    {
+      shell: { GOOGLE_APPLICATION_CREDENTIALS: "/own/sa.json" },
+      env: "GEMINI_API_KEY=received\n",
+      received: true,
+    },
+    (project, notes) => {
+      loadEnvFromDir(project);
+      assert.equal(process.env.GEMINI_API_KEY, undefined);
+      assert.match(
+        notes.join(""),
+        /ignoring GEMINI_API_KEY from a received project .*GOOGLE_APPLICATION_CREDENTIALS/,
+      );
+    },
+  );
+});
+
+test("loadEnvFromDir keeps a person's own .env Gemini key next to a shell service account music cannot use", () => {
+  withProviderProject(
+    { shell: { GOOGLE_APPLICATION_CREDENTIALS: "/own/sa.json" }, env: "GEMINI_API_KEY=mine\n" },
+    (project, notes) => {
+      loadEnvFromDir(project);
+      assert.equal(process.env.GEMINI_API_KEY, "mine");
+      assert.deepEqual(notes, []);
+    },
+  );
+});
+
+test("loadEnvFromDir leaves out a project .env's Gemini key when the shell has the other Gemini API key", () => {
+  withProviderProject(
+    { shell: { GOOGLE_API_KEY: "own" }, env: "GEMINI_API_KEY=cloned\n" },
+    (project, notes) => {
+      loadEnvFromDir(project);
+      assert.equal(process.env.GEMINI_API_KEY, undefined);
+      assert.match(
+        notes.join(""),
+        /ignoring GEMINI_API_KEY from a project \.env .*using your own GOOGLE_API_KEY/,
+      );
+    },
+  );
+});
+
+test("loadEnvFromDir keeps a project .env's Gemini key when the person has no Gemini credential", () => {
+  withProviderProject({ env: "GEMINI_API_KEY=mine\n" }, (project, notes) => {
+    loadEnvFromDir(project);
+    assert.equal(process.env.GEMINI_API_KEY, "mine");
+    assert.deepEqual(notes, []);
+  });
+});
+
+test("loadEnvFromDir keeps a person's own .env ElevenLabs key for an explicit provider choice", () => {
+  withProviderProject(
+    { shell: { HEYGEN_API_KEY: "own" }, env: "ELEVENLABS_API_KEY=mine\n" },
+    (project) => {
+      loadEnvFromDir(project);
+      assert.equal(process.env.ELEVENLABS_API_KEY, "mine");
+    },
+  );
+});
+
+test("loadEnvFromDir leaves out a received .env's ElevenLabs key when the person has a HeyGen key", () => {
+  withProviderProject(
+    { shell: { HEYGEN_API_KEY: "own" }, env: "ELEVENLABS_API_KEY=received\n", received: true },
+    (project) => {
+      loadEnvFromDir(project);
+      assert.equal(process.env.ELEVENLABS_API_KEY, undefined);
+    },
+  );
+});
+
+test("a key the CLI took from a received .env gives way the same as one the script read", () => {
+  withProviderProject({ env: "", received: true }, (project) => {
+    process.env.HEYGEN_API_KEY = "own";
+    process.env.ELEVENLABS_API_KEY = "received";
+    process.env.HYPERFRAMES_PROJECT_ENV_ORIGINS = JSON.stringify({ ELEVENLABS_API_KEY: project });
+    loadEnvFromDir(project);
+    assert.equal(process.env.ELEVENLABS_API_KEY, undefined);
+  });
+});
+
+test("a received .env's ElevenLabs key with no competing credential is used, with a note naming the file", () => {
+  withProviderProject(
+    { env: "ELEVENLABS_API_KEY=received\n", received: true },
+    (project, notes) => {
+      loadEnvFromDir(project);
+      assert.equal(process.env.ELEVENLABS_API_KEY, "received");
+      noteProjectElevenLabsKey();
+      noteProjectElevenLabsKey();
+      assert.equal(notes.length, 1);
+      assert.match(notes[0], /Using ELEVENLABS_API_KEY from .*\.env, a received project:/);
+    },
   );
 });
