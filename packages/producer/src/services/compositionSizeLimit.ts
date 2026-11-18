@@ -30,7 +30,7 @@ class CompositionTooLargeError extends Error {
       bytes: number;
       limitBytes: number;
       mounts?: number;
-      exceeded?: "bytes" | "mounts";
+      exceeded?: "bytes" | "mounts" | "generated";
     }>,
   ) {
     super(message);
@@ -47,10 +47,51 @@ const fileTooLarge = (file: string, bytes: number) =>
     { bytes, limitBytes: MAX_COMPOSITION_HTML_BYTES },
   );
 
-/** Adds up every mount a render inlines and throws once the total passes either limit. */
+const limitText = `One render generates at most ${megabytes(MAX_EXPANDED_COMPOSITION_BYTES)}`;
+
+function generatedTooLarge(file: string, bytes: number): string {
+  if (file === "composition variables") {
+    return (
+      `Composition variable styles add up to ${megabytes(bytes)}. ${limitText}. ` +
+      "Shorten the variable values or declare them on fewer elements."
+    );
+  }
+  if (file === "variable media sources") {
+    return (
+      `Variable-bound media sources add up to ${megabytes(bytes)}. ${limitText}. ` +
+      "Use shorter URLs or bind fewer elements."
+    );
+  }
+  return (
+    `Scripts and styles generated for sub-composition mounts, ending at "${file}", add up to ` +
+    `${megabytes(bytes)}. One render generates at most ` +
+    `${megabytes(MAX_EXPANDED_COMPOSITION_BYTES)} for its mounts. Merge small inline scripts ` +
+    "and style rules, keep data-composition-id values short, or mount scenes fewer times."
+  );
+}
+
+/** Adds up every mount a render inlines, and what it generates for them, and throws past a limit. */
 export class CompositionExpansionBudget {
   private bytes = 0;
   private mounts = 0;
+  private generated = 0;
+
+  /** `bytes` may be negative when a reserved upper bound is settled to the real size. */
+  chargeGenerated(file: string, bytes: number): void {
+    this.generated += bytes;
+    if (this.generated <= MAX_EXPANDED_COMPOSITION_BYTES) return;
+    throw new CompositionTooLargeError(generatedTooLarge(file, this.generated), {
+      bytes: this.generated,
+      limitBytes: MAX_EXPANDED_COMPOSITION_BYTES,
+      exceeded: "generated",
+    });
+  }
+
+  chargeGeneratedIfItFits(bytes: number): boolean {
+    if (this.generated + bytes > MAX_EXPANDED_COMPOSITION_BYTES) return false;
+    this.generated += bytes;
+    return true;
+  }
 
   charge(file: string, bytes: number): void {
     this.bytes += bytes;

@@ -14,6 +14,16 @@ function fakeHost() {
   return { host: host as unknown as Window, deliver: (e: Partial<MessageEvent>) => listener?.(e) };
 }
 
+function hostReachingEveryListenerOfADispatch() {
+  const listeners = new Set<Listener>();
+  const host = {
+    addEventListener: (_type: string, fn: Listener) => listeners.add(fn),
+    removeEventListener: (_type: string, fn: Listener) => listeners.delete(fn),
+  };
+  const deliver = (e: Partial<MessageEvent>) => [...listeners].forEach((fn) => fn(e));
+  return { host: host as unknown as Window, deliver };
+}
+
 function previewFrame() {
   const iframe = document.createElement("iframe");
   document.body.appendChild(iframe);
@@ -83,8 +93,45 @@ describe("createEditingPortClient", () => {
           "color-grading-status",
           "color-grading-previews",
           "color-grading-playback",
+          "watch-geometry",
+          "audio-meter",
+          "document-markup",
+          "set-audio-group-attribute",
+          "assign-audio-group",
+          "gsap-snapshot",
+          "motion-path-home",
+          "max-z-index",
+          "crop-lift",
         ],
       });
+    } finally {
+      agent.dispose();
+    }
+  });
+
+  it("gives two clients of one frame a port each, so both get their replies", async () => {
+    const { iframe, frame } = previewFrame();
+    const { host, deliver } = hostReachingEveryListenerOfADispatch();
+    const parent = document.body.appendChild(document.createElement("iframe")).contentWindow!;
+    parent.postMessage = ((data: unknown, _origin: string, transfer: MessagePort[]) => {
+      ports.push(...transfer);
+      setTimeout(() => deliver({ source: frame, data, ports: transfer }));
+    }) as Window["postMessage"];
+    frame.postMessage = ((data: unknown) =>
+      window.dispatchEvent(
+        new MessageEvent("message", { source: parent, data }),
+      )) as Window["postMessage"];
+    const agent = installMarkedEditingAgent(parent);
+    try {
+      const first = createEditingPortClient({ iframe, host, timeoutMs: 1_000 });
+      const second = createEditingPortClient({ iframe, host, timeoutMs: 1_000 });
+      clients.push(first, second);
+      await Promise.all([first.ready, second.ready]);
+      const [z, loop] = await Promise.all([
+        first.request("max-z-index", {}),
+        second.request("set-loop-start", { seconds: null }),
+      ]);
+      expect([z, loop]).toEqual([{ zIndex: 0 }, { applied: false }]);
     } finally {
       agent.dispose();
     }
@@ -244,6 +291,27 @@ describe("createEditingPortClient", () => {
     const late = client.request("runtime-snapshot", {}, { timeoutMs: 5 });
     await expect(late).rejects.toBeInstanceOf(EditingPortError);
     await expect(late).rejects.toMatchObject({ code: "timeout" });
+  });
+
+  it("hands each geometry push to its listeners, drops off-shape ones, and stops the watch on dispose", async () => {
+    const { iframe, frame } = previewFrame();
+    const { host, deliver } = fakeHost();
+    const client = createEditingPortClient({ iframe, host });
+    const { port1, port2 } = channel();
+    deliver({ source: frame, data: PORT_MESSAGE, ports: [port1] });
+    await client.ready;
+    const asked: Array<Record<string, unknown>> = [];
+    port2.onmessage = (event) => asked.push(event.data);
+    const heard = vi.fn();
+    client.onGeometry(heard);
+    void client.request("watch-geometry", { handles: ["0123456789abcdef:1"] }).catch(() => {});
+    port2.postMessage({ v: 1, event: "geometry", at: 1, elements: [null], extra: 1 });
+    port2.postMessage({ v: 1, event: "geometry", at: 2, elements: [null] });
+    await vi.waitFor(() => expect(heard).toHaveBeenCalledOnce());
+    expect(heard).toHaveBeenCalledWith({ at: 2, elements: [null] });
+    client.dispose();
+    await vi.waitFor(() => expect(asked).toHaveLength(2));
+    expect(asked[1]).toMatchObject({ kind: "watch-geometry", params: { handles: [] } });
   });
 
   it("dispose rejects pending and later requests and closes the port", async () => {

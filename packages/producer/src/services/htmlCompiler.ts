@@ -316,21 +316,26 @@ const isPrivateCompositionFile = (projectDir: string, filePath: string): boolean
 
 type CompositionProblem = { srcPath: string; detail: string };
 
-const mountSrcsUnder = (root: ParentNode): string[] =>
-  [...root.querySelectorAll("[data-composition-src]")]
-    .map((el) => el.getAttribute("data-composition-src"))
-    .filter((srcPath): srcPath is string => !!srcPath && !isUnresolvedAssetPlaceholder(srcPath));
-
-/** `templated` holds the mounts inside `<template>` content, which a document query does not see. */
+/** `templated` holds mounts inside templates. Reading `template.content` per level would clone each subtree again. */
 function compositionSrcsIn(html: string): { mounts: string[]; templated: string[] } {
   const { document } = parseHTML(html);
+  const mounts: string[] = [];
   const templated: string[] = [];
-  const templates = [...document.querySelectorAll("template")];
-  for (let template = templates.pop(); template; template = templates.pop()) {
-    templated.push(...mountSrcsUnder(template.content));
-    templates.push(...template.content.querySelectorAll("template"));
+  const stack: Array<[Element, boolean]> = [...document.children]
+    .reverse()
+    .map((el) => [el, false]);
+  for (let next = stack.pop(); next; next = stack.pop()) {
+    const [el, inTemplate] = next;
+    const srcPath = el.getAttribute("data-composition-src");
+    if (srcPath && !isUnresolvedAssetPlaceholder(srcPath)) {
+      (inTemplate ? templated : mounts).push(srcPath);
+    }
+    const childrenInTemplate = inTemplate || el.localName === "template";
+    const children = [...el.children];
+    for (let i = children.length - 1; i >= 0; i -= 1)
+      stack.push([children[i]!, childrenInTemplate]);
   }
-  return { mounts: mountSrcsUnder(document), templated };
+  return { mounts, templated };
 }
 
 function compositionPathProblem(
@@ -1185,6 +1190,7 @@ function inlineSubCompositions(
   variableOverrides: Record<string, unknown>,
   assetRoot: string | undefined,
   outsideFiles: OutsideFilePolicy,
+  budget: CompositionExpansionBudget,
 ): { html: string; variablesByComp: Record<string, Record<string, unknown>> } {
   const { document } = parseHTML(html);
   const head = document.querySelector("head");
@@ -1200,11 +1206,11 @@ function inlineSubCompositions(
       document as unknown as Document,
       {},
       variableOverrides,
+      { chargeBytes: (bytes) => budget.chargeGenerated("composition variables", bytes) },
     );
     return { html: emitted ? document.toString() : html, variablesByComp: {} };
   }
 
-  const budget = new CompositionExpansionBudget();
   const readOnce = new Map<string, string | null>();
   const readMountHtml = (srcPath: string): string | null => {
     const filePath = resolveCompositionFile(projectDir, srcPath, assetRoot);
@@ -1262,6 +1268,7 @@ function inlineSubCompositions(
         if (compHtml) budget.charge(srcPath, Buffer.byteLength(compHtml));
         return compHtml;
       },
+      chargeEmitted: (srcPath: string, bytes: number) => budget.chargeGenerated(srcPath, bytes),
       parseHtml: (htmlStr: string) => parseHTML(htmlStr).document as unknown as Document,
       // Mirrors the preview bundler: a sub-composition's SIBLING assets resolve
       // against its own directory, project-root refs stay as authored.
@@ -1372,6 +1379,7 @@ function inlineSubCompositions(
     document as unknown as Document,
     result.variablesByComp,
     variableOverrides,
+    { chargeBytes: (bytes) => budget.chargeGenerated("composition variables", bytes) },
   );
 
   // Inlining is what makes element ids ambiguous: each composition file is
@@ -2035,15 +2043,6 @@ function localizeFontFaceUrls(
   );
 }
 
-/**
- * Match one `url(<path>)` occurrence, with or without quotes, for a literal
- * path. Exported for tests: the suffix-collision it prevents is invisible in
- * ordinary projects and easy to reintroduce.
- */
-export function urlOccurrenceRe(localPath: string): RegExp {
-  const escaped = localPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`url\\((["']?)${escaped}\\1\\)`, "g");
-}
 // Base64 expands bytes by ~33%, then immutable HTML replacements retain more
 // string copies while compiling. Files up to and including 5 MiB remain inline;
 // the first byte above that stays file-backed. This conservative ceiling keeps
@@ -2067,81 +2066,107 @@ async function readLocalFont(absPath: string): Promise<LocalFontRead> {
   return { kind: "inline", buffer: Buffer.concat(chunks, totalBytes) };
 }
 
-// fallow-ignore-next-line complexity
+/** The data URI a project font path embeds as, or undefined when it stays a file. */
+async function localFontDataUri(
+  localPath: string,
+  projectDir: string,
+  assetRoot: string | undefined,
+  dataUriByAbsolutePath: Map<string, string | undefined>,
+  log: ProducerLogger,
+): Promise<string | undefined> {
+  const absPath = localPath.startsWith("/") ? localPath : resolve(projectDir, localPath);
+  if (!isPathInside(absPath, projectDir) || escapesAssetRoot(absPath, assetRoot)) return undefined;
+  // A project font that is a link leading outside obeys the same policy as the file server.
+  if (refusesOutsideLink(projectDir, absPath, (line) => log.warn(`[Compiler] ${line}`))) {
+    return undefined;
+  }
+  if (isPrivateCompositionFile(projectDir, absPath)) return undefined;
+  if (dataUriByAbsolutePath.has(absPath)) return dataUriByAbsolutePath.get(absPath);
+  const ext = absPath.match(/\.(woff2?|ttf|otf|ttc)$/i)?.[1]?.toLowerCase() ?? "ttf";
+  try {
+    const font = await readLocalFont(absPath);
+    if (font.kind === "file-backed") {
+      dataUriByAbsolutePath.set(absPath, undefined);
+      defaultLogger.debug(
+        `[Compiler] Kept large local font file-backed: ${localPath} (> ${(MAX_LOCAL_FONT_DATA_URI_BYTES / 1024 / 1024).toFixed(1)} MB)`,
+      );
+      return undefined;
+    }
+    const { fontToDataUri } = await import("@hyperframes/core/fonts/embed");
+    const dataUri = await fontToDataUri(font.buffer, ext, { compressToWoff2: false });
+    dataUriByAbsolutePath.set(absPath, dataUri);
+    defaultLogger.debug(
+      `[Compiler] Embedded local font file: ${localPath} (${(font.buffer.length / 1024).toFixed(0)} KB → data URI)`,
+    );
+    return dataUri;
+  } catch (error) {
+    // Keep the original path: a font that cannot be read must not fail the render, but say why
+    // it renders in a fallback typeface.
+    defaultLogger.warn(
+      `[Compiler] Could not embed local font ${localPath}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return undefined;
+  }
+}
+
+/** `whole` with its `inner` text, which ends `tail` characters before its end, replaced. */
+const replaceInner = (whole: string, inner: string, tail: number, next: string) =>
+  whole.slice(0, whole.length - tail - inner.length) + next + whole.slice(whole.length - tail);
+
+/**
+ * Inline the project fonts that `<style>` `@font-face` sources name as data URIs. Every copy is
+ * charged to the render's budget, so a font named by many rules stops being inlined once the
+ * budget is spent and the rest keep loading it from its file.
+ */
 async function embedLocalFontFaces(
   html: string,
   projectDir: string,
   assetRoot: string | undefined,
+  budget: CompositionExpansionBudget,
   log: ProducerLogger = defaultLogger,
 ): Promise<string> {
-  const { fontToDataUri: toDataUri } = await import("@hyperframes/core/fonts/embed");
-  let result = html;
-  const embeddedPaths = new Set<string>();
-  const dataUriByAbsolutePath = new Map<string, string>();
-  const fileBackedAbsolutePaths = new Set<string>();
-
+  const dataUriByPath = new Map<string, string | undefined>();
+  const dataUriByAbsolutePath = new Map<string, string | undefined>();
   for (const { parts: style } of styleBlockMatches(html)) {
     for (const { parts: face } of fontFaceBlockMatches(style[1])) {
-      const block = face[1];
-      for (const { parts } of localFontFaceUrlMatches(block)) {
+      for (const { parts } of localFontFaceUrlMatches(face[1])) {
         const localPath = parts[1];
-        if (!localPath || embeddedPaths.has(localPath)) continue;
-        const absPath = localPath.startsWith("/") ? localPath : resolve(projectDir, localPath);
-        if (!isPathInside(absPath, projectDir) || escapesAssetRoot(absPath, assetRoot)) continue;
-        // A project font that is a link leading outside obeys the same policy as the file server.
-        if (refusesOutsideLink(projectDir, absPath, (line) => log.warn(`[Compiler] ${line}`))) {
-          embeddedPaths.add(localPath);
-          continue;
-        }
-        if (isPrivateCompositionFile(projectDir, absPath)) continue;
-        const ext = absPath.match(/\.(woff2?|ttf|otf|ttc)$/i)?.[1]?.toLowerCase() ?? "ttf";
-        try {
-          if (fileBackedAbsolutePaths.has(absPath)) {
-            embeddedPaths.add(localPath);
-            continue;
-          }
-          let dataUri = dataUriByAbsolutePath.get(absPath);
-          if (!dataUri) {
-            const font = await readLocalFont(absPath);
-            if (font.kind === "file-backed") {
-              fileBackedAbsolutePaths.add(absPath);
-              defaultLogger.debug(
-                `[Compiler] Kept large local font file-backed: ${localPath} (> ${(MAX_LOCAL_FONT_DATA_URI_BYTES / 1024 / 1024).toFixed(1)} MB)`,
-              );
-              embeddedPaths.add(localPath);
-              continue;
-            }
-            dataUri = await toDataUri(font.buffer, ext, { compressToWoff2: false });
-            dataUriByAbsolutePath.set(absPath, dataUri);
-            defaultLogger.debug(
-              `[Compiler] Embedded local font file: ${localPath} (${(font.buffer.length / 1024).toFixed(0)} KB → data URI)`,
-            );
-          }
-          // Anchored on the `url(...)` occurrence, not a bare substring. A
-          // plain replaceAll of `localPath` also rewrites that text anywhere
-          // else it appears -- including inside a LONGER url whose tail
-          // happens to match, e.g. embedding `fonts/x.ttf` would corrupt an
-          // untouched `url("file:///abs/fonts/x.ttf")` into
-          // `url("file:///abs/<data-uri>")`. Any two paths where one is a
-          // suffix of the other collide the same way. Every sibling rewrite
-          // in this file already anchors like this.
-          result = result.replace(urlOccurrenceRe(localPath), `url("${dataUri}")`);
-          embeddedPaths.add(localPath);
-        } catch (error) {
-          // Keep the original path: a font that cannot be read must not fail
-          // the render. Logged rather than silently swallowed -- a silent skip
-          // here means the composition renders in a fallback typeface and
-          // nothing says why.
-          defaultLogger.warn(
-            `[Compiler] Could not embed local font ${localPath}: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-          );
-        }
+        if (!localPath || dataUriByPath.has(localPath)) continue;
+        dataUriByPath.set(
+          localPath,
+          await localFontDataUri(localPath, projectDir, assetRoot, dataUriByAbsolutePath, log),
+        );
       }
     }
   }
-  return result;
+  if (![...dataUriByPath.values()].some(Boolean)) return html;
+
+  let warned = false;
+  const embed = (source: string, localPath: string) => {
+    const dataUri = dataUriByPath.get(localPath);
+    if (!dataUri) return source;
+    const inlined = `url("${dataUri}")`;
+    if (budget.chargeGeneratedIfItFits(inlined.length - source.length)) return inlined;
+    if (!warned) {
+      warned = true;
+      log.warn(
+        `[Compiler] Kept local font ${localPath} file-backed: the page reached its inline size limit`,
+      );
+    }
+    return source;
+  };
+  return replaceMatches(html, styleBlockMatches(html), (style, css) =>
+    replaceInner(
+      style,
+      css,
+      "</style>".length,
+      replaceMatches(css, fontFaceBlockMatches(css), (face, body) =>
+        replaceInner(face, body, 1, replaceMatches(body, localFontFaceUrlMatches(body), embed)),
+      ),
+    ),
+  );
 }
 
 /**
@@ -2255,11 +2280,20 @@ function rebaseDirectEntryAssetPaths(html: string, projectDir: string, htmlPath:
   return document.toString();
 }
 
+export const MAX_VARIABLE_MEDIA_SRC_BYTES = 8 * 1024;
+// oxlint-disable-next-line no-control-regex
+const MEDIA_SRC_CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
+
 /**
  * Point each `data-var-src` video/audio at the clip its variable names, so the length and sound read below
  * are the bound clip's. Media under a per-instance `data-variable-values` host keeps the browser's answer.
  */
-function bindVariableMediaSources(html: string, variables: Record<string, unknown>): string {
+function bindVariableMediaSources(
+  html: string,
+  variables: Record<string, unknown>,
+  budget: CompositionExpansionBudget,
+  log?: ProducerLogger,
+): string {
   if (!html.includes("data-var-src")) return html;
   const { document } = parseHTML(html);
   const declared: Record<string, unknown> = {};
@@ -2270,8 +2304,17 @@ function bindVariableMediaSources(html: string, variables: Record<string, unknow
   let changed = false;
   for (const el of document.querySelectorAll("video[data-var-src], audio[data-var-src]")) {
     if (el.closest("[data-variable-values]")) continue;
-    const src = boundMediaSrc(el, values);
-    if (src === null || el.getAttribute("src") === src) continue;
+    const bound = boundMediaSrc(el, values);
+    if (bound === null) continue;
+    const src = bound.trim();
+    if (src.length > MAX_VARIABLE_MEDIA_SRC_BYTES || MEDIA_SRC_CONTROL_CHARS.test(src)) {
+      log?.warn("[Compiler] Refused a variable media source that cannot be a URL", {
+        length: src.length,
+      });
+      continue;
+    }
+    if (el.getAttribute("src") === src) continue;
+    budget.chargeGenerated("variable media sources", src.length);
     el.setAttribute("src", src);
     changed = true;
   }
@@ -2310,9 +2353,12 @@ export async function compileForRender(
   }
   assertCompositionFileSize(htmlPath, basename(htmlPath));
   const entryHtml = rebaseDirectEntryAssetPaths(readTextFile(htmlPath), projectDir, htmlPath);
+  const budget = new CompositionExpansionBudget();
   const rawHtml = bindVariableMediaSources(
     normalizeCompositionSrcs(rewriteUnresolvableGsapToCdn(entryHtml, projectDir), projectDir),
     options.variables ?? {},
+    budget,
+    options.log,
   );
 
   // Pre-flight: every data-composition-src reference must resolve to a
@@ -2363,6 +2409,7 @@ export async function compileForRender(
     options.variables ?? {},
     assetRoot,
     outsideFiles,
+    budget,
   );
 
   // Strip preload="none" from media elements — the renderer needs to load all
@@ -2488,6 +2535,7 @@ export async function compileForRender(
     htmlWithPreparedGifs,
     projectDir,
     assetRoot,
+    budget,
     options.log,
   );
 
