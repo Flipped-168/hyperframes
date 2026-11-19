@@ -497,6 +497,62 @@ it("looks up only the ids a stylesheet names", () => {
   expect(sets).toBeLessThan(20_000);
 });
 
+// fails without the fix: every read of a scope's size walked every id the scope renames.
+it("reads a scope's size without walking its ids, however many styles ask", () => {
+  const ids = Array.from({ length: 500 }, (_, index) => `c${index}`);
+  const defs = ids.map((id) => `<clipPath id="${id}"/><rect clip-path="url(#${id})"/>`).join("");
+  const { document, scopes } = scopedDocument([
+    { namespace: "a", html: `<svg>${defs}</svg>` },
+    { namespace: "b", html: `<svg>${defs}</svg>` },
+  ]);
+  const idMap = namespaceCollidingSvgIds(document, scopes)[1]!;
+  const has = vi.spyOn(Map.prototype, "has");
+  let lookups: number;
+  try {
+    for (let i = 0; i < 500; i += 1) rewriteSvgIdReferencesInCss(`.s${i} { color: red; }`, idMap);
+    lookups = has.mock.calls.length;
+  } finally {
+    has.mockRestore();
+  }
+
+  expect(idMap.size).toBe(500);
+  expect(lookups).toBeLessThan(500);
+});
+
+// fails without the fix: every attribute selector compared its name against the scope's whole alias list, and an
+// exact match still checked one copy per element that referenced the same symbol.
+it("rewrites attribute selectors in linear time however many fragment references the mount holds", () => {
+  const rewrite = (n: number, target: (i: number) => string) => {
+    let reads = 0;
+    const references = Array.from({ length: n }, (_, i) => {
+      const before = `#${target(i)}`;
+      return {
+        name: "href",
+        localName: "href",
+        namespaceURI: null,
+        get before() {
+          reads += 1;
+          return before;
+        },
+        after: `#m--${target(i)}`,
+      };
+    });
+    const css = Array.from({ length: n }, (_, i) => `[href="#${target(i)}"] { fill: red; }`).join(
+      "\n",
+    );
+    return { css: rewriteSvgIdReferencesInCss(css, new Map(), references), reads: () => reads };
+  };
+  const work = (n: number, target: (i: number) => string) => rewrite(n, target).reads();
+  const distinct = (i: number) => `g${i}`;
+  const sameSymbol = () => "g";
+
+  expect(rewrite(8, distinct).css).toContain(`:is([href="#g5"], [href="#m--g5"]) { fill: red; }`);
+  expect(rewrite(8, sameSymbol).css).toContain(`:is([href="#g"], [href="#m--g"]) { fill: red; }`);
+  // About 2 when linear, about 4 when every selector checks every alias.
+  expect(work(800, distinct) / work(400, distinct)).toBeLessThan(2.6);
+  expect(work(800, sameSymbol) / work(400, sameSymbol)).toBeLessThan(2.6);
+});
+
 // fails without the fix: the whole namespace, however long, prefixed every renamed id.
 it("caps a long namespace's prefix, each mount's renamed ids still distinct", () => {
   const long = (end: string) => `${"x".repeat(5000)}${end}`;

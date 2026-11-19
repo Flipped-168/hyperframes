@@ -102,6 +102,11 @@ describe("createEditingPortClient", () => {
           "motion-path-home",
           "max-z-index",
           "crop-lift",
+          "edit-element",
+          "gsap-set",
+          "patch-tweens",
+          "soft-reload",
+          "assets-unloaded",
         ],
       });
     } finally {
